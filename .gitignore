@@ -1,0 +1,10 @@
+# WorkBuddy 本地记忆（含个人隐私，不入库）
+.workbuddy/
+
+# 构建产物：发布包单独托管在 GitHub Release，不进版本库
+*.fxplug
+dist/
+build/
+
+# 临时构建脚本
+_build*.py
