@@ -6,5 +6,19 @@
 dist/
 build/
 
-# 临时构建脚本
+# 临时构建脚本与 Nuitka 生成的启动器残留
 _build*.py
+_build*.exe
+_build*.cmd
+# 例外：adfilter 的正式打包脚本需要入库（README 有引用，保证构建可复现）
+!adfilter/_build_exe.py
+
+# Nuitka 中间产物
+*.build/
+*.dist/
+*.onefile-build/
+_build_exe.build/
+
+# Python 缓存（adfilter 清洗服务）
+__pycache__/
+*.pyc

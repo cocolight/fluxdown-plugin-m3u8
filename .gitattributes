@@ -1,0 +1,9 @@
+# 统一行尾：入库与各平台检出一律 LF，避免 Windows / Linux 检出结果不一致
+* text=auto eol=lf
+
+# 二进制文件不做行尾与文本转换
+*.fxplug binary
+*.exe     binary
+*.png     binary
+*.jpg     binary
+*.ico     binary
