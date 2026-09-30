@@ -1,0 +1,40 @@
+# m3u8_adclean 广告识别规则
+#
+# 语法（每行一条，大小写不敏感）：
+#   空行 / 以 # 开头   → 忽略
+#   re:<正则>          → 按正则匹配（Python 正则，已忽略大小写）
+#   其它文本           → 按子串匹配（出现在分片 URI 任意位置即命中）
+#
+# 命中即判定为广告：整个分片（#EXTINF + 分片 URI）连同包裹它的
+# #EXT-X-DISCONTINUITY 一起剔除。命中的规则名会打印在日志里。
+#
+# 修改本文件后重启服务生效（无需重新编译 exe）。
+#
+# 注意：标准广告标记无需在此配置，服务已内置识别
+#   #EXT-X-CUE-OUT / #EXT-X-CUE-IN      → 广告块边界
+#   #EXT-X-DATERANGE（含 SCTE-35/CUE）  → 广告区间
+#   #EXT-X-GAP                          → 空缺占位段
+
+# ---- 路径与关键词（子串匹配）----
+/video/adjump/
+/adjump/
+/ad/
+/ads/
+/adsv/
+/preroll/
+/midroll/
+/postroll/
+/spot/
+/skip
+/companion
+/vast/
+preroll
+midroll
+advert
+doubleclick
+googlesyndication
+
+# ---- 正则示例（去掉行首 # 即可启用）----
+# re:^/video/adjump/
+# re:(?:^|/)(?:ad|ads|adv|adjump)\d*\.ts(?:\?|$)
+# re:_ad\.ts
