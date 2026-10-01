@@ -20,7 +20,7 @@
     {
       "key": "targetHosts",
       "title": "目标站点主机（逗号分隔）",
-      "description": "仅处理这些主机的「页面 URL」。直接粘贴的 .m3u8 不受限。留空则插件不处理任何页面。例：video.example.com,cdn.example.com",
+      "description": "指定要让插件识别的网站。填入网站域名（如 example.com；会一并匹配子网站，如 video.example.com），从这些网站的播放页添加下载时，插件会自动帮你找到视频并列出清晰度。可填多个，用英文逗号分隔。留空则不识别任何网站，此时只有直接粘贴的 .m3u8 链接可触发此插件。",
       "type": "string",
       "widget": "text"
     },
