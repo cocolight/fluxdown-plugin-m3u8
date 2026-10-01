@@ -6,6 +6,8 @@
 //   - remuxToMp4     : 下载后由 hooks.js 用 ffmpeg 无损转封装为 MP4（增强 A）
 //   - adClean        : 本地源头去广告（增强 C）—— ★ 已停用，代码整体注释保留（见下方同名小节）
 //   - separateAudio  : 解析 #EXT-X-MEDIA / 纯音频变体，返回 audioUrl，由核心自动合并（增强 D）
+//   - detectSeries   : 剧集页识别，返回清单让引擎裂变成 N 个子任务（1.5.0，multi）
+//   - authCookie     : 登录凭据，由 auth.js 落库，本文件负责把它并进下载请求头（1.6.0）
 // 命名（对应 #568/#301）：播放页取 <title>，直链 m3u8 用 URL 推导；可用 nameTemplate 自定义。
 // 安装：设置 → 扩展 → 插件 → 从目录安装本插件的 src/ 目录（开发模式热读 .js，改完存盘即生效）
 //
@@ -13,13 +15,16 @@
 //   - 字幕（#EXT-X-MEDIA:TYPE=SUBTITLES / WebVTT）：resolver 返回值无字幕字段；且 ffmpeg
 //     沙箱只认「产物目录内的相对名」，而 flux.fs 是另一个独立工作区，抓到的字幕送不进去
 //     → 单层不可行。本文件只记录字幕轨（subtitleRenditions），不下载。
-//   - 任务分组：官方明确「插件不能创建任务」，且无 group 接口 → 不可行。
+//   - 任务分组：插件**仍然不能创建任务**（flux.task 只有 requestRetry）。但 1.5.0 起可以返回
+//     多文件清单（resolvers[0].multi=true），由**引擎**按清单自动裂变并建任务组。
 //   - SAMPLE-AES / SAMPLE-AES-CTR / FairPlay / Widevine、LL-HLS(#EXT-X-PART)、真直播无限录制：
 //     核心层能力，插件天花板。插件侧只在 noteEncryption() 里把加密方式说清楚，不尝试绕过。
 //   - #EXT-X-KEY:METHOD=NONE：引擎依赖的 m3u8-rs 6.0.1 有 IV 校验写反的上游缺陷，会把这行
 //     降级为未知标签，使明文段被误用上一段的 AES-128 密钥解密（PKCS7 Unpad Error）。
 //     属上游问题，插件无法规避 —— 见 docs/upstream-m3u8-rs-method-none.md。
 //   - onMetaProbed：带 resolver 的插件该钩子永不触发（官方明确），故 manifest 不订阅。
+//   - 认证凭据：宿主只在 flux.fetch 内注入认证档案（bridge.rs::http_request），下载链路拿不到
+//     → 本文件 authHeadersAsync() 必须自己把凭据并进 extraHeaders（见该函数注释）。
 
 // ================= 设置读取（容错：布尔 / 字符串两种运行时取值） =================
 function settingBool(key, def) {
@@ -153,8 +158,89 @@ function fetchHeaders(ctx, referer) {
   if (referer) h["Referer"] = referer;
   return h;
 }
-// 给下载引擎用：下载解析后直链时附带的请求头
-function authHeaders(ctx) {
+// ---- 认证凭据注入（1.6.0）----
+// ★ 已核实（native/engine/src/plugin/bridge.rs:503）：宿主**只在 `flux.fetch` 内**调用
+//   `AuthProfile::apply_to_headers`，**下载链路（playlist / 分片 / KEY）拿不到插件的认证档案**。
+//   因此凡是交给引擎下载的地址，凭据必须由插件自己并进 extraHeaders，否则表现为
+//   「解析成功却 403 / 下回来一个登录页」。
+// 沙箱无 btoa（QuickJS 全局对象实测），Basic 的 base64 只能手写。
+const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function b64encode(s) {
+  const str = String(s == null ? "" : s);
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x80) bytes.push(c);
+    else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+      const cp = 0x10000 + ((c - 0xd800) << 10) + (str.charCodeAt(++i) - 0xdc00);
+      bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+    } else bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : -1;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : -1;
+    out += B64_CHARS[b0 >> 2];
+    out += B64_CHARS[((b0 & 3) << 4) | (b1 < 0 ? 0 : b1 >> 4)];
+    out += b1 < 0 ? "=" : B64_CHARS[((b1 & 15) << 2) | (b2 < 0 ? 0 : b2 >> 6)];
+    out += b2 < 0 ? "=" : B64_CHARS[b2 & 63];
+  }
+  return out;
+}
+// 站点键：与宿主 auth::site_key 同口径 —— `{scheme}://{host}[:port]`，即 parseUrl().origin。
+// 用来把凭据**限制在登记的站点**：宿主在 http_request 里本就做同源检查才注入，
+// 插件把凭据复制进 extraHeaders 必须自己补上这道闸，否则 Cookie 会跟着 CDN 主机发出去。
+function hasHeaderCI(h, name) {
+  const want = String(name).toLowerCase();
+  for (const k in h) {
+    if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === want) return true;
+  }
+  return false;
+}
+// 档案 → 请求头（与宿主 AuthProfile::apply_to_headers 同序：Cookie/Bearer/Basic 三者
+// 只取其一，档案自带的 headers 最后覆盖同名）。返回 null 表示本次不注入。
+async function authProfileHeaders(ctx, targetUrl) {
+  const authRef = ctx && ctx.authRef ? String(ctx.authRef) : "";
+  if (!authRef) return null;
+  if (!flux.auth || typeof flux.auth.get !== "function") return null; // 未授予 auth 权限
+  let p = null;
+  try {
+    p = await flux.auth.get(authRef);
+  } catch (e) {
+    flux.logger.warn("[m3u8-resolver] 读取认证凭据失败，本次不带凭据:", String(e));
+    return null;
+  }
+  if (!p || typeof p !== "object") return null;
+  const site = String(p.site || "");
+  const target = parseUrl(targetUrl);
+  const key = target ? target.origin : "";
+  if (!site || !key || site !== key) {
+    // 跨站点不注入（含 CDN 主机）。确需跨主机带凭据者，用 extraHeadersRaw 手工指定 ——
+    // 那条路径是用户显式声明，不参与这道同源检查。
+    flux.logger.info(
+      "[m3u8-resolver] 认证凭据站点 " + (site || "(空)") + " 与下载目标 " + (key || targetUrl) + " 不同源，未注入"
+    );
+    return null;
+  }
+  const ph = {};
+  if (p.cookies) ph["Cookie"] = String(p.cookies);
+  if (p.accessToken) ph["Authorization"] = "Bearer " + String(p.accessToken);
+  if (String(p.kind || "").toLowerCase() === "basic" && (p.username || p.password)) {
+    ph["Authorization"] = "Basic " + b64encode(String(p.username || "") + ":" + String(p.password || ""));
+  }
+  if (p.headers && typeof p.headers === "object") {
+    for (const k in p.headers) {
+      if (Object.prototype.hasOwnProperty.call(p.headers, k)) ph[k] = String(p.headers[k]);
+    }
+  }
+  return ph;
+}
+// 给下载引擎用：下载解析后直链时附带的请求头。
+// 顺序（后者不覆盖前者）：自动 Referer/Origin → extraHeadersRaw/userAgent → 任务 extraHeaders
+//   → 认证凭据（同源 + 无同名头才并入）。
+async function authHeadersAsync(ctx, targetUrl) {
   const ref = refererValue(ctx);
   const extra = {};
   if (ref) extra["Referer"] = ref;
@@ -166,6 +252,12 @@ function authHeaders(ctx) {
   // 任务自带的 extraHeaders 优先级最高
   if (ctx && ctx.extraHeaders) {
     for (const k in ctx.extraHeaders) if (Object.prototype.hasOwnProperty.call(ctx.extraHeaders, k)) extra[k] = ctx.extraHeaders[k];
+  }
+  const ph = await authProfileHeaders(ctx, targetUrl);
+  if (ph) {
+    for (const k in ph) {
+      if (Object.prototype.hasOwnProperty.call(ph, k) && !hasHeaderCI(extra, k)) extra[k] = ph[k];
+    }
   }
   return { extraHeaders: extra };
 }
@@ -274,7 +366,7 @@ async function resolve(ctx) {
   // 已经是 media playlist（直接列 .ts 分片）→ 无需选码率，带好头直接返回
   if (!parsed.variants.length && isMediaPlaylist(body)) {
     flux.logger.info("[m3u8-resolver] 已是 media playlist，直接返回");
-    return await marked(ctx, finalize(ctx, playlistUrl, nameFor(pageTitle, ctx, null, null), null));
+    return await marked(ctx, await finalize(ctx, playlistUrl, nameFor(pageTitle, ctx, null, null), null));
   }
   if (!parsed.variants.length) throw new Error("master 中未解析到变体");
   flux.logger.info("[m3u8-resolver] 解析到 " + parsed.variants.length + " 个变体");
@@ -310,7 +402,7 @@ async function resolve(ctx) {
       );
     }
     flux.logger.info("[m3u8-resolver] 纯音频提取 →", a.label || "audio");
-    return await marked(ctx, finalize(ctx, a.url, nameFor(pageTitle, ctx, chosen, a), null));
+    return await marked(ctx, await finalize(ctx, a.url, nameFor(pageTitle, ctx, chosen, a), null));
   }
 
   if (settingBool("autoPick", false)) {
@@ -318,7 +410,7 @@ async function resolve(ctx) {
     const a = audioSourceFor(ctx, chosen, opt, false);
     return await marked(
       ctx,
-      finalize(
+      await finalize(
         ctx,
         chosen.url,
         nameFor(pageTitle, ctx, chosen, a),
@@ -349,7 +441,7 @@ async function resolve(ctx) {
   };
   const nm = nameFor(pageTitle, ctx, chosen, defAudio);
   if (nm) out.fileName = nm;
-  const ah = authHeaders(ctx);
+  const ah = await authHeadersAsync(ctx, chosen.url);
   out.extraHeaders = ah.extraHeaders;
   return await marked(ctx, out);
 }
@@ -434,7 +526,7 @@ async function resolveViaYtdlp(ctx) {
     rangeSupported: true,
     ephemeral: settingBool("ephemeral", false),
   };
-  const ah = authHeaders(ctx);
+  const ah = await authHeadersAsync(ctx, direct);
   out.extraHeaders = ah.extraHeaders;
   await markHandled(ctx.taskId);
   return out;
@@ -460,12 +552,13 @@ function assertOutputUrl(u, what) {
       " —— 通常意味着 playlist 里的相对路径未被成功绝对化，请附上该源地址反馈。"
   );
 }
-function finalize(ctx, url, fileName, audioUrl) {
+// 1.6.0 起为 async：需要读一次 flux.auth 才能把凭据并进 extraHeaders（下载链路拿不到插件档案）。
+async function finalize(ctx, url, fileName, audioUrl) {
   // 广告过滤已停用：顶层 url 不再经 maybeClean 改写，直接用解析得到的原始地址
   const out = { url: assertOutputUrl(url, "顶层 url") };
   if (fileName) out.fileName = fileName;
   if (audioUrl) out.audioUrl = assertOutputUrl(audioUrl, "audioUrl");
-  const ah = authHeaders(ctx);
+  const ah = await authHeadersAsync(ctx, url);
   out.extraHeaders = ah.extraHeaders;
   out.rangeSupported = true;
   out.ephemeral = settingBool("ephemeral", false);
@@ -977,7 +1070,7 @@ async function resolveSecondStage(ctx) {
 
   const parsed = parseMaster(body, playlistUrl);
   if (!parsed.variants.length) {
-    if (isMediaPlaylist(body)) return await marked(ctx, finalize(ctx, playlistUrl, null, null));
+    if (isMediaPlaylist(body)) return await marked(ctx, await finalize(ctx, playlistUrl, null, null));
     throw new Error("master 中未解析到变体");
   }
 
@@ -1002,11 +1095,11 @@ async function resolveSecondStage(ctx) {
     if (!a || !a.url) {
       throw new Error("纯音频提取：该条目未提供独立音轨，无法在下载层分离。请关闭「纯音频提取」后重试。");
     }
-    return await marked(ctx, finalize(ctx, a.url, null, null));
+    return await marked(ctx, await finalize(ctx, a.url, null, null));
   }
 
   const a = audioSourceFor(ctx, chosen, opt, false);
-  return await marked(ctx, finalize(ctx, chosen.url, null, a && a.url ? a.url : null));
+  return await marked(ctx, await finalize(ctx, chosen.url, null, a && a.url ? a.url : null));
 }
 
 // ================= 通用解析 =================
