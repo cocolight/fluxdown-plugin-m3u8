@@ -2,7 +2,7 @@
 
 > 依据：FluxDown 官方插件文档 `website/src/content/docs/zh/plugins/{overview,manifest,api-reference}.md`
 > 与引擎源码（`native/engine/src/`；完整克隆在 `E:/Project/FluxDown`）。
-> 核对日期 2026-10-01，对应插件版本 **1.6.0**。
+> 核对日期 2026-10-01，对应插件版本 **1.7.0**。
 > 2026-10-01 本轮：读引擎 `plugin/runtime.rs` 与 `plugin/manifest.rs`，核实三项公开文档未列的能力
 > （`manifest` / `subscriptions` / `auth`）与 `onCancel`，更正 §1 / §4 中两处旧判断（详见 §7）；
 > 其中 **① 多文件清单在 v1.5.0 落地，② 订阅源 / ③ 登录认证在 v1.6.0 落地**。
@@ -177,6 +177,8 @@ v1.4.1 修掉的 `new URL` 缺陷（QuickJS 无 `URL` 全局对象 → `absUrl()
 | **多文件清单 / 批量建任务（`manifest` + `multi`）** | ✅ | **已实现（v1.5.0）**：`resolvers[0].multi=true` 时 `resolve()` 返回 `manifest{name, items[]}`，引擎**自动裂变为 N 个子任务**，二段用 `resolver_item`（`<id>` / `<id>@<variantId>`）回调取直链。约束：与 `url`/`variants`/`audioUrl` **互斥**、**仅初段可返回**、`path` 深度 ≤8 且 `path/name` ≤180。误判防护见 §7.3 |
 | **订阅源（自动追更）** | ✅ | **已实现（v1.6.0）**：`subscriptions:[{providerId:"m3u8play",entry:"subscribe.js",timeoutMs:25000}]`，v0.4.8 起订阅来源可选插件，条目**自动建任务 / 去重 / 调度 / 重试**复用内置能力。插件只枚举并输出 feed（不碰订阅表、不建任务），`guid` 由「主机 + 路径」的 FNV-1a 生成（丢 query 以防签名抖动）。接口契约见 §7.2 / 实现要点见 §7.4 |
 | **登录认证** | ✅ | **已实现（v1.6.0）**：`auth:{entry:"auth.js"}` + `permissions:["auth"]`，v0.4.8 起支持 Cookie/Basic/Bearer/Headers；凭据经 `ctx.authRef` 自动附加到 `flux.fetch`。★ **下载链路不自动注入** ⇒ 插件自建 `authHeadersAsync()` 把凭据并进 `extraHeaders`（见 §7.4） |
+| **防抓页 Cookie 挑战自动通过** | ✅ | **已实现（v1.7.0）**：识别「体积极小 + 内联 `eval([…].map(…fromCharCode(c^K)))` + 非 `#EXTM3U`」的挑战页，解码取 `document.cookie="name=value"`，对**同一地址**重取一次。K / Cookie 名 / 值均不写死。**仅覆盖可解码的 XOR-eval 形态**；JS 指纹 / captcha 无解（沙箱无 DOM、无 JS 执行）。解不出即 fail-closed 退回原行为 |
+| **内嵌播放器（iframe / maccms）跟随** | ✅ | **已实现（v1.7.0）**：页面无字面 m3u8 时，取 `<iframe src>`（**同站优先**，先排除 `javascript:`/`about:`/`data:`）或 maccms `player_data.link` 兜底 → 绝对化 → 带 `Referer`=嵌入页 抓取 → 再跑 `extractMaster`。有界（`iframeMaxFollow` 默认 1）、自指防环、单次解析总抓取 ≤12 |
 | 全钩子通知/日志 | ✅（部分） | 已用 `onDone` + `onError` + **`onCancel`（v1.5.0 起订阅，用于清理任务标记）**。`onMetaProbed` 对本插件永不触发；`onStart` 仅纯日志、徒增噪音，未订阅 |
 | 命名模板 | ✅ | `nameTemplate`，占位符 `{title} {res} {lang} {host} {date}` |
 | 合并完整性校验（段数 vs manifest） | ❌ | 插件拿不到下载进度/段清单；`flux.task` 无查询接口 |
@@ -217,6 +219,12 @@ v1.4.1 修掉的 `new URL` 缺陷（QuickJS 无 `URL` 全局对象 → `absUrl()
 - [ ] `extraHeaders` 是否确实作用于**分片与密钥请求**（官方描述是「下载解析后直链时附带」），
       若只作用于首次请求，则 `#EXT-X-KEY` 的防盗链头需要另想办法。
 - [x] ~~源码中 `ResolveResult` 的 `manifest` 字段语义未核实~~ —— **已核实并落地**（2026-10-01，读 `native/engine/src/plugin/runtime.rs`）：多文件清单，配 `resolvers[0].multi=true` 使用，引擎自动裂变建任务。**v1.5.0 已实现**（剧集页识别 + 二段解析，见 §7 / §7.3）。
+- [ ] **v1.7.0：显式 `Cookie` 头是否被 `flux.fetch` 采纳，未经真机验证**。引擎文档称 Cookie 由引擎携带，
+      插件在 `fetchHeaders` 里显式写 `Cookie` 是否被采纳 / 被覆盖，需一次真机请求确认。
+      若不采纳 ⇒ Part A（解挑战）不生效，但**仍 fail-closed**（退回原有行为）；Part B（跟 iframe）**独立有效** ——
+      实测样本 ttdm10 真正出 m3u8 的正是 Part B。
+- [ ] v1.7.0：防抓页解码**只覆盖 XOR-eval 形态**；混淆变体（`atob` / 自定义变换 / 分段拼接）一律不匹配并 fail-closed。
+- [ ] v1.7.0：`ttdm10.me` 端到端（挑战 → 详情页 → iframe → m3u8）尚未在真机跑过。
 
 ---
 
@@ -250,7 +258,7 @@ manifest 为 `deny_unknown_fields` —— **旧版 FluxDown 见到 `multi` / `su
 1. 落地前必须抬 `minAppVersion`。**引入版本已用 `git tag --contains` 确证**：
    `multi` / `ResolveManifest`（`6bb74507`）随 **v0.3.0** 落地；`subscriptions`（`eca60efe`）与 `auth`（`0f08118f`）随 **v0.4.8** 落地。
 2. ★ **`minAppVersion` 救不了旧版**：它是在 **serde 解析成功之后**才检查的，而旧版在**解析阶段**就因 `deny_unknown_fields` 失败、插件被跳过。它只能让新版**主动**跳过。
-3. 故按能力分设门槛：**v1.5.0（`multi`）= `0.3.0`**（保住 0.3.x–0.4.7 用户的剧集批量下载）；**v1.6.0（订阅 / auth）= `0.4.8`**。
+3. 故按能力分设门槛：**v1.5.0（`multi`）= `0.3.0`**（保住 0.3.x–0.4.7 用户的剧集批量下载）；**v1.6.0（订阅 / auth）= `0.4.8`**；**v1.7.0（反爬站增强）= `0.4.8`** —— 它**未引入任何新引擎字段**（只用 `flux.fetch` + 设置项），门槛跟着 v1.6.0 走，且**不可回落**：manifest 里仍带着 `auth` / `subscriptions` 段。
 4. 这些字段属引擎契约、**未进公开文档**，存在随版本变动的风险，落地时须绑定实际安装版本复验。
 
 ### 7.3 v1.5.0 实现要点（`multi` 落地）
@@ -300,3 +308,45 @@ manifest 为 `deny_unknown_fields` —— **旧版 FluxDown 见到 `multi` / `su
 - `subscriptions` **未进公开文档**（`auth` 已进 `zh/plugins/manifest.md` + `api-reference.md`）⇒ 订阅依赖引擎实现的稳定性，风险更高，必须绑实机版本复验。
 - 沙箱无 `btoa`：Basic 头的 base64 由插件手写（`b64encode`）。`Date` / `JSON` / `RegExp` / `Math` / `Promise` 均可正常使用（已用真实 QuickJS 探测）。
 - 凭据注入加**同源闸门**（`scheme://host[:port]` 完全一致），避免把站点 Cookie 发给 CDN 主机；用户手写在 `extraHeadersRaw` 里的头不做该检查（显式声明优先）。
+
+### 7.5 v1.7.0 实现要点（反爬站解析增强）
+
+**声明**：仅 `version: "1.7.0"` + 3 个设置项（`solveChallenge` / `followIframe` / `iframeMaxFollow`）。
+`minAppVersion` **保持 `0.4.8`**（不是 `0.3.0` —— 理由见 §7.2 第 3 条：manifest 里仍有 `auth` / `subscriptions` 段）。
+
+**Part A：防抓页 Cookie 挑战**
+
+- 判定 `looksLikeChallenge`：体 ≤ `CHALLENGE_MAX_BYTES`(8192)、非 `#EXTM3U`、且匹配 `EVAL_XOR_RE`。
+  正则宽松覆盖变量名 / 空白 / 箭头函数 / 十六进制 K：
+  `eval([105,98,…].map(function(c){return String.fromCharCode(c^13);}).join(""))`。
+- 解码 `decodeEvalXor`（数组长度 ≤ `CHALLENGE_MAX_CODES` = 20000）→ `extractCookieAssignment`
+  取 `document.cookie="name=value;path=…"` 的 `name=value`（剥掉 `;path` / `;max-age` 等属性，name/value 均须非空）。
+- 执行：解出后按**目标 host** 记入本次解析上下文，并对**同一 URL 重取一次**（只一次，不循环）。
+- ★ **体积门是重要判据**：真实挑战页 599 字节；正常页面不会这么小，故大页面里偶然出现该片段也不会被误判。
+
+**Part B：内嵌播放器跟随**
+
+- `findIframeSrc`：扫描 `<iframe … src="…">`，**同站优先**（跨站多为广告 / 统计）。
+  ★ **必须在 `absUrl` 之前排除伪协议** —— 否则 `javascript:void(0)` 会被当成相对路径拼成
+  `https://host/javascript:void(0)`，而它反过来能通过 http(s) 校验（本测试 3c 正是覆盖此点）。
+- `findPlayTarget`：iframe 优先；无 iframe 时用 maccms `player_data` 的 `"link"` 兜底。
+  ⚠️ 该值在 JSON 里是 `"\/vod-play\/…"`，故正则**不能**排除反斜杠，由 `findPlayTarget` 统一还原 `\/` → `/`。
+- `followIframe`：有界递归（`iframeMaxFollow`，1–3，默认 1）、自指防环、命中即返回 `{m3u8, referer}`。
+  抓 master 时 `Referer` 换成**播放页 URL**（比嵌入页更贴近浏览器行为）。
+
+**Cookie 传递（无模块级可变状态、不落盘）**
+
+- `newResolveCtx()` → `{cookies: {host: "name=value"}, fetches: 0}`，在 `resolve()` **顶部**创建（二段共用）。
+- `fetchHeaders(ctx, referer, rc, targetUrl)` 新增后两个**可选**参数：按目标 host 并入挑战 Cookie（`mergeCookie` 去重合并）。
+  **不传 = 旧行为**，历史调用点零影响。
+- `smartFetch(ctx, rc, url, referer)` 是**唯一**抓取入口：计数闸（`RESOLVE_FETCH_CAP = 12`）+ 挑战解算 + 一次重取。
+  6 个原有 `flux.fetch` 调用点**全部**改走它。
+- ★ **挑战 Cookie 只在单次解析内存中**，不写 `flux.storage`，维持 README 的隐私承诺。
+
+**回归前提**
+
+- `extractMaster()` **逐字未动**；`detectListing()` 判定逻辑一字未改。顺序仍是「先判清单、再判单视频」，避免剧集页被降级成单集。
+- Part B 仅在 `found` 为空时触发；两开关均严格 fail-closed，**不会比现状更差**。
+- 实测样本 `ttdm10.me/vod/11076/`：详情页 `m3u8` 出现 **0** 次、`iframe` 1 个；
+  且页面里的 `vodPlayerName` 含 `dPlayer` 子串 ⇒ 命中 `PLAYER_MARK_RE` ⇒ `detectListing` 返回 null ⇒ 走 Part B。
+  ⚠️ 该命中带有偶然性（取自 `vodPlayerName`），**不是设计依赖**；换成无该子串的同构页面，Tier-2 仍可能按链接聚类判定，结论需实测。
