@@ -3,7 +3,7 @@
   "name": "M3U8 发现与变体解析器",
   "version": "1.7.0",
   "minAppVersion": "0.4.8",
-  "description": "输入页面或 master.m3u8，自动发现正确播放列表、解析多码率变体并带上 Referer/Origin/UA 鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持音视频分离（返回 audioUrl，由核心自动合并）、纯音频提取、按编码筛选画质、伪 m3u8 检测、yt-dlp 委派、下载后 remux 为 MP4、轨对合并兜底、智能命名（剔除 index/playlist 等无信息量名、取上层 ID 段、默认模板 {title} {host}）。1.4.1 修复 QuickJS 沙箱无 URL 全局对象导致的相对地址绝对化全面失效（表现为「url scheme 不允许」）。1.4.2 新增加密方式体检：解析时把源的 METHOD / KEYFORMAT 写进日志，并对 DRM 与「METHOD=NONE 上游缺陷」给出明确归因，避免把引擎/上游问题误判为插件问题。1.4.3 停用本地源头去广告能力（adClean / adCleanServer 设置项已移除）。1.5.0 新增剧集页识别：页面含多集结构时弹出选集窗口，可一次勾选多集批量下载，由引擎自动建立任务组。1.6.0 新增通用登录与订阅追更：登录把站点 Cookie / Bearer / Basic / 自定义请求头交给宿主持久化，并在下载 playlist 与分片时一并带上（宿主只在 flux.fetch 注入凭据，下载链路必须由插件补齐）；订阅从列表页枚举条目，交给引擎按订阅去重建任务。1.7.0 新增反爬站解析增强：自动通过「防抓页」脚本校验（解出 Cookie 后对同一地址重取），并在页面没有直接 m3u8 时跟随内嵌播放器（iframe）继续解析；两者解不出 / 跟不到即退回原有行为，绝不比现状更差。",
+  "description": "输入播放页 URL 或 master.m3u8，自动发现播放列表、解析多码率变体，并带上 Referer/Origin/UA 等鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持画质与编码筛选、音视频分离与纯音频提取、剧集页批量下载、登录凭据、订阅追更、反爬站处理（自动通过防抓页校验、跟随内嵌播放器）、yt-dlp 委派、下载后转封装为 MP4 与智能命名。",
   "homepage": "https://github.com/cocolight/fluxdown-plugin-m3u8",
   "permissions": ["ffmpeg", "ytdlp", "auth"],
   "resolvers": [
