@@ -2,10 +2,13 @@
 
 > 依据：FluxDown 官方插件文档 `website/src/content/docs/zh/plugins/{overview,manifest,api-reference}.md`
 > 与引擎源码（`native/engine/src/`；完整克隆在 `E:/Project/FluxDown`）。
-> 核对日期 2026-10-01，对应插件版本 **1.5.0**。
+> 核对日期 2026-10-01，对应插件版本 **1.6.0**。
 > 2026-10-01 本轮：读引擎 `plugin/runtime.rs` 与 `plugin/manifest.rs`，核实三项公开文档未列的能力
 > （`manifest` / `subscriptions` / `auth`）与 `onCancel`，更正 §1 / §4 中两处旧判断（详见 §7）；
-> 其中 **① 多文件清单已在 v1.5.0 落地**。
+> 其中 **① 多文件清单在 v1.5.0 落地，② 订阅源 / ③ 登录认证在 v1.6.0 落地**。
+> 另核实一条对 v1.6.0 至关重要的事实：**宿主只在 `flux.fetch` 内注入认证档案**
+> （`plugin/bridge.rs::http_request` 调 `AuthProfile::apply_to_headers`，下载链路无调用点）
+> ⇒ 下载 playlist / 分片所需的凭据必须由插件自己并进 `extraHeaders`（见 §7.4）。
 >
 > 本文的用途：把「哪些能靠插件补、哪些是接口硬限制」钉死，避免再按二手分析文档
 > 去实现不存在的字段。凡是标 ❌ 的，都已验证接口不存在，**不要尝试**。
@@ -29,7 +32,8 @@
 | `flux.fetch` 拦截 loopback / 局域网 / link-local / 云元数据 IP | 插件**无法探测本地服务**（`adfilter` 的 `/health` 探不到），去广告不能做自动回退。**注意：该守卫只作用于 `flux.fetch`，不拦引擎自身的下载客户端**（源码复核 `bridge.rs` + `hls_downloader.rs`） |
 | `flux.ffmpeg` / `flux.ffprobe` **只在 `onDone` 可用**，工作目录 = 产物目录，参数禁止绝对路径/`..`/URL scheme | 想用 ffmpeg 处理某个文件，该文件必须在产物目录里且用相对名引用 |
 | `flux.fs` 是**独立的** scratch 工作区（与 `flux.ytdlp` 的 cwd 同一处） | 写进它的文件**到不了** ffmpeg 的产物目录沙箱 |
-| **插件不能创建任务、不能读任意文件、不能操作界面** | 没有任务/分组管理能力 |
+| ★ **认证档案只在 `flux.fetch` 内被注入**：全仓库 `apply_to_headers` 唯一调用点在 `bridge.rs::http_request`（且要求 `site_key(req.url) == profile.site`） | **下载链路（playlist / 分片 / KEY）拿不到插件凭据** ⇒ 插件必须把凭据并进返回值的 `extraHeaders`（v1.6.0 的 `authHeadersAsync`） |
+| **插件不能创建任务、不能读任意文件、不能操作界面** | 没有任务/分组管理能力。**但引擎会据插件输出代为建任务**：清单（`manifest`）→ 裂变建组；订阅条目 → 建任务。插件自身仍不建任务 |
 | `flux.task` 只有 `requestRetry`（且只在 `onError` 有效） | 没有分组 CRUD、没有查询任务的接口 |
 
 ---
@@ -171,8 +175,8 @@ v1.4.1 修掉的 `new URL` 缺陷（QuickJS 无 `URL` 全局对象 → `absUrl()
 | `ephemeral` 升级为周期性 re-resolve | ❌ | 核心已是「每次开始/恢复都重新执行 `resolve`」的惰性模型，无需插件干预 |
 | **字幕轨道（WebVTT）** | ❌ | 返回值无字幕字段；且 `flux.fs` ≠ ffmpeg 沙箱，抓到的字幕送不进去。**只能识别并记录** |
 | **多文件清单 / 批量建任务（`manifest` + `multi`）** | ✅ | **已实现（v1.5.0）**：`resolvers[0].multi=true` 时 `resolve()` 返回 `manifest{name, items[]}`，引擎**自动裂变为 N 个子任务**，二段用 `resolver_item`（`<id>` / `<id>@<variantId>`）回调取直链。约束：与 `url`/`variants`/`audioUrl` **互斥**、**仅初段可返回**、`path` 深度 ≤8 且 `path/name` ≤180。误判防护见 §7.3 |
-| **订阅源（自动追更）** | ⚪ | 引擎支持：`subscriptions:[{providerId,entry,timeoutMs}]`，v0.4.8 起订阅来源可选插件，条目**自动建任务 / 去重 / 调度 / 重试**。**本插件未实现**（计划 v1.6.0，详见 §7） |
-| **登录认证** | ⚪ | 引擎支持：`auth:{entry}` + `permissions:["auth"]`，v0.4.8 起支持 Cookie/Basic/Bearer/Headers + 扫码轮询；凭据经 `ctx.authRef` 自动附加到 `flux.fetch`。**本插件未实现**（计划 v1.6.0，详见 §7） |
+| **订阅源（自动追更）** | ✅ | **已实现（v1.6.0）**：`subscriptions:[{providerId:"m3u8play",entry:"subscribe.js",timeoutMs:25000}]`，v0.4.8 起订阅来源可选插件，条目**自动建任务 / 去重 / 调度 / 重试**复用内置能力。插件只枚举并输出 feed（不碰订阅表、不建任务），`guid` 由「主机 + 路径」的 FNV-1a 生成（丢 query 以防签名抖动）。接口契约见 §7.2 / 实现要点见 §7.4 |
+| **登录认证** | ✅ | **已实现（v1.6.0）**：`auth:{entry:"auth.js"}` + `permissions:["auth"]`，v0.4.8 起支持 Cookie/Basic/Bearer/Headers；凭据经 `ctx.authRef` 自动附加到 `flux.fetch`。★ **下载链路不自动注入** ⇒ 插件自建 `authHeadersAsync()` 把凭据并进 `extraHeaders`（见 §7.4） |
 | 全钩子通知/日志 | ✅（部分） | 已用 `onDone` + `onError` + **`onCancel`（v1.5.0 起订阅，用于清理任务标记）**。`onMetaProbed` 对本插件永不触发；`onStart` 仅纯日志、徒增噪音，未订阅 |
 | 命名模板 | ✅ | `nameTemplate`，占位符 `{title} {res} {lang} {host} {date}` |
 | 合并完整性校验（段数 vs manifest） | ❌ | 插件拿不到下载进度/段清单；`flux.task` 无查询接口 |
@@ -220,7 +224,7 @@ v1.4.1 修掉的 `new URL` 缺陷（QuickJS 无 `URL` 全局对象 → `absUrl()
 
 读引擎源码（`native/engine/src/plugin/runtime.rs`、`.../plugin/manifest.rs`）核实：引擎已支持、公开文档未列的三块能力，均直接命中剧集/动漫站场景。这三项都是「插件不建任务，但引擎据插件输出自动建任务」的机制，因此**不违反**「插件不能创建任务」这一约束。
 
-> **落地进度**：① 多文件清单 —— **v1.5.0 已实现**（见 §7.3）；② 订阅源、③ 登录认证 —— 计划 v1.6.0。
+> **落地进度**：① 多文件清单 —— **v1.5.0 已实现**（见 §7.3）；② 订阅源、③ 登录认证 —— **v1.6.0 已实现**（见 §7.4）。
 
 | # | 能力 | 声明方式 | 价值 | 关键约束 |
 | --- | --- | --- | --- | --- |
@@ -260,3 +264,39 @@ manifest 为 `deny_unknown_fields` —— **旧版 FluxDown 见到 `multi` / `su
 - **`inScope()`**：`resolverItem` 非空一律放行 —— 否则未配 `targetHosts` 时，子任务会被「放行」成按原 URL 下载（下到 HTML）。
 - **条目名**：过 `safeFileName()`（在 `sanitizeAssetName` 之外补清 `..` 与控制字符）+ `uniqueName()` 去重；一律以 `.mp4` 结尾。
 - **回归基线**：`extractMaster()` 逐字未动；新增的 `extractAllMasters()` 保证 `[0] === extractMaster(...)`，因此单视频分支输出与 1.4.x 逐字相同。
+
+### 7.4 v1.6.0 实现要点（`auth` + `subscriptions` 落地）
+
+**声明**：`permissions` 追加 `"auth"`，`auth:{entry:"auth.js",timeoutMs:25000}`，
+`subscriptions:[{providerId:"m3u8play",entry:"subscribe.js",timeoutMs:25000}]`，`minAppVersion: "0.4.8"`。
+
+**★ 最关键的一条事实（决定整个 auth 实现的形状）**：
+宿主只在 **`flux.fetch`** 内注入认证档案 —— `plugin/bridge.rs::http_request` 在
+`auth_allowed && site_key(req.url) == profile.site` 时才调 `AuthProfile::apply_to_headers`；
+全仓库搜 `apply_to_headers` 只有这一处调用点（另一处在 `auth.rs` 单测里）。
+**下载链路（playlist / 分片 / `#EXT-X-KEY`）没有调用点。**
+⇒ 插件必须自建 `authHeadersAsync(ctx, targetUrl)`，把凭据并进返回值的 `extraHeaders`，
+否则表现是「解析成功但 403」。为此 `finalize()` 由同步改为 **async**（6 个调用点同步加 `await`）。
+
+**登录（`auth.js`）**
+- 入口 `globalThis.authenticate(ctx)`，返回**对象**（不是 JSON 字符串）—— 宿主 wrapper
+  对 resolve / authenticate / subscribe 三个入口统一 `JSON.stringify(__r)` 后再解析
+  （`plugin/quickjs.rs::build_entry_wrapper`）。返回字符串会被二次编码而解析失败。
+- 五个 action：`status`（读回档案 + 过期判断，未登录用 `error` 表达，因为状态位只有 pending/success/error）、
+  `begin`/`poll`（输入优先、设置项 `authCookie` 次之；都没有则 `pending` + `challengeType:"text"`）、
+  `cancel`（`error "已取消"`）、`logout`（`flux.auth.remove`；宿主在插件被禁用时也会放行 `logout` 并自行清理，插件这次调用是幂等兜底）。
+- 输入映射：`bearer:`/`token ` → `kind:"bearer"`；`basic:` → `kind:"basic"`；多行 `键: 值` → `kind:"headers"`；其余 → `kind:"cookie"`。
+- 站点取自 `ctx.authRef` 的 `::` 之后（`插件ID::站点`，站点含 scheme）；`ctx.site` 兜底。宿主在
+  `manager.rs::authenticate` 里会用 `normalize_site` 把裸 host 补成 https。
+
+**订阅（`subscribe.js`）**
+- 入口 `globalThis.subscribe(ctx)`，同样返回**对象**。`ctx = {providerId, sourceId, url, providerConfig, cookies, userAgent}`。
+- 复用与 §7.3 平行的「同站 + 链接形态聚类」规则（**两套实现有意不共享代码** —— 四个脚本是独立 QuickJS 上下文，不能 require）；命中 `PLAYER_MARK_RE` 直接返回空 feed。
+- `guid = "m3u8-" + fnv1a32(host + pathname)`，**丢 query**（签名抖动会让同一条目每次 guid 不同 → 重复建任务）；feed 内碰撞时并入 query 的 FNV 值。
+- 条目 `resolverItem = "u:" + link`，`link` 为分集页 URL ⇒ 引擎建任务后走 §7.3 的二段解析取直链。
+- `providerConfig`（JSON）为用户逃生舱：`minItems`（默认 **2**，比 `manifestMinItems=3` 宽松，因为订阅地址是用户主动配置的）/ `maxItems` / `linkPattern` / `include` / `exclude`。
+
+**未知/易错点**
+- `subscriptions` **未进公开文档**（`auth` 已进 `zh/plugins/manifest.md` + `api-reference.md`）⇒ 订阅依赖引擎实现的稳定性，风险更高，必须绑实机版本复验。
+- 沙箱无 `btoa`：Basic 头的 base64 由插件手写（`b64encode`）。`Date` / `JSON` / `RegExp` / `Math` / `Promise` 均可正常使用（已用真实 QuickJS 探测）。
+- 凭据注入加**同源闸门**（`scheme://host[:port]` 完全一致），避免把站点 Cookie 发给 CDN 主机；用户手写在 `extraHeadersRaw` 里的头不做该检查（显式声明优先）。

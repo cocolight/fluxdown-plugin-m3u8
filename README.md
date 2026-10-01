@@ -2,18 +2,20 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-一个 [FluxDown](https://github.com/zerx-lab/FluxDown) 下载器插件：输入播放页或 `master.m3u8`，自动发现正确的播放列表、解析多码率变体，并带上 `Referer`/`Origin`/`UA` 鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持**音视频分离**（返回 `audioUrl`，由核心自动合并）、**纯音频提取**、按编码/画质筛选、**伪 m3u8 检测**、**剧集页批量下载**、yt-dlp 委派、下载后 remux 为 MP4。
+一个 [FluxDown](https://github.com/zerx-lab/FluxDown) 下载器插件：输入播放页或 `master.m3u8`，自动发现正确的播放列表、解析多码率变体，并带上 `Referer`/`Origin`/`UA` 鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持**音视频分离**（返回 `audioUrl`，由核心自动合并）、**纯音频提取**、按编码/画质筛选、**伪 m3u8 检测**、**剧集页批量下载**、**登录凭据**、**订阅追更**、yt-dlp 委派、下载后 remux 为 MP4。
 
-> 适用场景：HLS（`.m3u8`）流媒体下载。需要 FluxDown 桌面端/服务端：**最低 0.3.0**（剧集批量下载所需），推荐 **0.4.8 及以上**（支持 `.fxplug` 一键安装）。
+> 适用场景：HLS（`.m3u8`）流媒体下载。需要 FluxDown 桌面端/服务端：**最低 0.4.8**（登录与订阅所依赖的引擎能力自 v0.4.8 起提供），推荐最新版。
 
 ## 功能特性
 
 - **自动发现 master**：直接粘贴 `.m3u8` 直链时直接处理；粘贴播放页时自动从页面源码抠出 `master.m3u8`（支持 `https:\/\/` JSON 转义与相对地址；复杂站点可自定义 `extractMaster`）。
 - **剧集页批量下载（v1.5.0）**：页面里出现「多集」结构时（同时含多集各自的 m3u8，或含一批同构的分集链接），提交链接会先弹出**选集窗口**，可一次勾选多集批量下载。插件只返回清单，**由引擎自动建立任务组**（插件自身依旧不能创建任务）；判定只认强信号，单视频页不会被误判。
+- **登录凭据（v1.6.0）**：需要登录才能取到 m3u8 的站点，把 Cookie / `bearer:` 令牌 / `basic:用户名:密码` / 多行请求头粘到插件设置里即可。凭据交给 **FluxDown 持久化**（不落在插件自己的存储里），此后抓取**播放列表与分片**都会自动带上。凭据只在**与登记站点同源**时才注入，不会跟着 CDN 主机发出去。
+- **订阅追更（v1.6.0）**：把「分集列表页」加为订阅源后，插件会枚举其中的条目交给引擎；引擎按条目 `guid` 去重，只对新集建任务。`guid` 由「主机 + 路径」算出，**刻意丢掉 query**，避免 CDN 签名抖动导致重复下载。
 - **多码率变体解析**：解析 `#EXT-X-STREAM-INF`，按带宽降序列出画质（标签含分辨率/码率/编码），支持手动选画质或自动选最高/指定画质。
 - **音视频分离（独立音轨）**：解析 `#EXT-X-MEDIA:TYPE=AUDIO` 与纯音频变体，把音轨地址作为 `audioUrl` 返回，FluxDown 会**自动把视频与音轨合并为单文件**；可按 `LANGUAGE` 指定语言轨。默认 `auto`，只在源明确为纯视频或已单列音轨时才分离，避免音视频合一的流被拆出双音轨。
 - **纯音频提取**：只下独立音轨（音乐/播客场景）。
-- **鉴权头自动注入**：`Referer` 优先使用任务携带的**播放页完整 URL**（比 `Origin` 更贴近浏览器行为），并注入 `Origin`、自定义 `User-Agent`、任意自定义请求头；抓取 playlist 与抓取分片**用的是同一套头**。Cookie 由 FluxDown 引擎自动携带。
+- **鉴权头自动注入**：`Referer` 优先使用任务携带的**播放页完整 URL**（比 `Origin` 更贴近浏览器行为），并注入 `Origin`、自定义 `User-Agent`、任意自定义请求头；抓取 playlist 与抓取分片**用的是同一套头**。Cookie 由 FluxDown 引擎自动携带；若配置了登录凭据（v1.6.0），插件还会把凭据并进下载请求头（原因见 [登录与订阅](#登录与订阅v160)）。
 - **伪 m3u8 检测**：抓回的若是 HTML 登录页/拦截页而非 `#EXTM3U`，明确报错；装了 yt-dlp 时可自动改用它兜底重抽。
 - **相对地址修正（v1.4.1 重写，零依赖）**：FluxDown 的插件沙箱是 QuickJS，其中**没有 `URL` 全局对象**（`typeof URL === "undefined"`）。旧版依赖 `new URL(u, base)` 把 master 里的相对变体地址转绝对，因此在真实运行时**全部失效**，输出相对地址被引擎以「`url scheme 不允许`」整体拒绝。现已改为自实现的纯字符串 URL 解析（`parseUrl`/`absUrl`），并同步修好了同样受影响的 `hostOf`/`safeOrigin`/`inScope`；返回前还有 `assertOutputUrl` 做最后一道拦截，出错时给可读提示而非引擎的隐晦报错。
 - **默认命名更友好（v1.4.0 重写）**：文件名按「页面标题 → 上层 ID 目录 → 文件名」决策链推导，并**剔除 `index`/`playlist`/`master` 这类无信息量的基础名**；默认模板 `{title} {host}` 会把域名带进文件名。可用 `nameTemplate` 自定义。
@@ -60,6 +62,7 @@
 | 命名模板 | 占位符 `{title}` `{res}` `{lang}` `{host}` `{date}`。默认 `{title} {host}`（文件名带域名，便于区分同名剧集）；填 `{title}` 则不带域名。 | `{title} {host}` |
 | 自定义 User-Agent | 留空用 FluxDown 默认 UA。部分站点按 UA 返回不同 playlist。 | 空 |
 | 额外请求头 | 每行一条 `Key: Value`，`#` 注释。同时作用于抓 playlist 与抓分片；**同名头会覆盖自动推导的 `Referer`/`Origin`（显式优先）**。 | 空 |
+| 登录凭据 | 需要登录的站点填这里：Cookie 原文，或 `bearer:令牌` / `basic:用户名:密码` / 每行一条 `Key: Value` 的请求头。设置项旁的按钮可复制「取 Cookie 的脚本」到剪贴板，在浏览器控制台执行后把结果粘回。内容交由 FluxDown 持久化。 | 空 |
 | 防盗链/签名直链 | 跳过元数据探测，避免一次性/签名直链被用掉；恢复下载会重新解析。 | 关 |
 | 启用 yt-dlp 委派 | 链接交给 yt-dlp 抽直链，适合原生抠不出的站点。需先装 yt-dlp 组件。 | 关 |
 | 抓到 HTML 时用 yt-dlp 兜底 | 抓 playlist 得到 HTML（登录页/拦截页）而非 `#EXTM3U` 时，自动改用 yt-dlp。 | 开 |
@@ -73,6 +76,46 @@
   - 复杂站点若兜底正则抠不出，请按站点结构自定义 `src/resolver.js` 里的 `extractMaster()`。
 - **画质**：未开「自动选择」时会弹出画质选择框；默认选中按「偏好画质」算出的变体。
 - **剧集页**：页面含多集结构时（多集各自的 m3u8，或一批同构的分集链接），提交后会先弹出**选集窗口**，勾选即可批量下载。若某个站被误判或漏判，可用「识别剧集页并弹出选集」关闭该行为，或用「自定义剧集链接正则」告诉插件哪些链接算一集。
+- **需要登录的站点**：把凭据填进「登录凭据」即可，详见下节。
+
+## 登录与订阅（v1.6.0）
+
+### 登录凭据
+
+某些站点要登录后才给 m3u8。插件提供一条**站点无关**的通用通道：你把自己已拿到的凭据粘进来，插件规范化后交给 FluxDown 持久化。
+
+**怎么拿到凭据**：设置里「登录凭据」旁的按钮会把一段脚本复制到剪贴板 —— 在浏览器打开该站点、按 <kbd>F12</kbd> 进控制台粘贴执行，再把打印出来的内容粘回设置框即可。（`copy(document.cookie)` 在 Chrome/Edge 控制台可直接把 Cookie 放进剪贴板。）
+
+**支持四种写法**（插件按形态自动识别）：
+
+| 你粘贴的内容 | 效果 |
+| --- | --- |
+| `SID=abc; uid=7` | 作为 `Cookie` 头注入 |
+| `bearer:令牌` 或 `token 令牌` | `Authorization: Bearer 令牌` |
+| `basic:用户名:密码` | `Authorization: Basic …` |
+| 多行 `键: 值`（如 `Cookie: …` / `X-Token: …`） | 逐条注入 |
+
+**两个必须知道的行为**：
+
+1. **凭据只在同源时注入**。宿主对 `flux.fetch` 有同源闸门，插件把凭据复制进下载请求头时也照做，避免把站点 Cookie 发给 CDN 主机。确需跨主机带凭据的，用「额外请求头」显式写（那条路径是用户显式声明，不做同源检查）。
+2. **插件必须自己把凭据并进下载请求**。宿主只在 `flux.fetch`（插件抓页/抓 playlist）里注入认证档案，**下载分片走的是任务 `extraHeaders`**。没有这层，表现就是「解析成功但 403」。这也是本插件 v1.6.0 改造 `authHeadersAsync` 的原因。
+
+> 插件的登录入口**不实现任何站点特有的登录协议**（不做二维码轮询、不做 OAuth 跳转），因此对任何站点都能用，代价是需要你手动取一次凭据。
+
+### 订阅追更
+
+把「分集列表页」加为订阅源（provider = `m3u8play`），插件每次刷新会：
+
+1. 抓取该页；
+2. 找出其中**一批同构的同站链接**（形态聚类取最大簇，按序号排序）；
+3. 作为 feed 条目返回，交给引擎按 `guid` 去重建任务。
+
+- 页面命中播放器标记（`<video>` / hls.js 等）时判定为单集页，返回**空 feed**（宁可空，不可把「上一集/下一集」当成两集推送）。
+- 条目数默认至少 2 条才成立（比「自动识别剧集页」的 3 条宽松 —— 订阅地址是你主动配置的）。
+- 站点结构特殊时，可用 **providerConfig**（JSON）兜底：`{"minItems":2,"maxItems":200,"linkPattern":"…","include":"…","exclude":"…"}`。
+- 注意：预告/花絮的剔除只按 **URL** 判断，不看链接文字；站点若把预告做成正常路径，请用 `exclude` 手工排除。
+
+> ⚠️ 订阅（`subscriptions`）目前**未列入 FluxDown 公开插件文档**，是按引擎实现接入的。若某次引擎升级后行为变化，请以引擎源码为准。
 
 ## 音视频分离与纯音频提取
 
@@ -154,17 +197,19 @@ nameTemplate = {title} {res} {host} # 加画质与域名
      每个子任务再以条目 id 回调一次 `resolve`（此时 `ctx.resolverItem` 非空），只返回单直链。
 2. 校验返回值确实是 playlist（`#EXTM3U`）；若是 HTML 登录页则报错或交给 yt-dlp 兜底。
 3. 解析 `#EXT-X-STREAM-INF` 变体与 `#EXT-X-MEDIA` 音轨/字幕轨，按带宽排序，依「偏好编码 + 偏好画质」算默认变体（或列出供手选），并给每个变体配上 `audioUrl`。
-4. 返回结果带上 `Referer`（优先播放页 URL）/`Origin`/`User-Agent`/自定义头，标记 `rangeSupported` 以启用多线程分段。
+4. 返回结果带上 `Referer`（优先播放页 URL）/`Origin`/`User-Agent`/自定义头；若该站点存有登录凭据且**下载目标与其同源**，则一并并入 `Cookie`/`Authorization` 等（v1.6.0）。同时标记 `rangeSupported` 以启用多线程分段。
 5. 下载完成后 `src/hooks.js` 的 `onDone`：核心合并失败时用 ffmpeg 补合并；开启 remux 时把非 `.mp4` 容器无损转封装为 `.mp4`。
-6. `onError` 记录失败原因。**钩子只对本插件经手的任务生效**——resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/hooks.js` 文件头）。
+6. `onError` / `onCancel` 记录失败原因、清理任务标记。**钩子只对本插件经手的任务生效**——resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/hooks.js` 文件头）。
+7. 另有两条独立入口：`src/auth.js` 的 `authenticate(ctx)` 处理登录（由宿主以 `begin`/`poll`/`cancel`/`logout`/`status` 驱动）；`src/subscribe.js` 的 `subscribe(ctx)` 处理订阅枚举。三者是**彼此独立的 QuickJS 上下文**，不共享作用域。
 
 ## 安全与隐私
 
-- 插件只在你配置的「目标站点主机」或直链 `.m3u8` 上生效，不会处理无关页面（fail-closed）。
+- 插件只在你配置的「目标站点主机」或直链 `.m3u8` 上生效，不会处理无关页面（fail-closed）。订阅源的地址由你在订阅列表里显式添加。
 - 插件存储里只写入两类数据，**都不含任何 Cookie、Token 或凭据**：① 「本插件经手的任务 ID → 时间戳」标记（单键、上限 60 条、6 小时后自动过期），用于让钩子只对本插件任务生效；② 剧集批量下载的清单条目映射（单键、上限 400 条；仅在条目 URL 过长或含 `@` 时才落盘，内容为「条目令牌 → 目标 URL」），用于二段解析取回地址。
+- **登录凭据不落在插件存储里**：v1.6.0 起凭据经 `flux.auth` 交给 FluxDown 统一持久化（与站点绑定、按 `插件ID::站点` 引用），卸载插件即可一并清除；插件只在运行时读回使用。
+- **凭据只在同源时注入下载请求**：插件复制凭据进 `extraHeaders` 前会比对「凭据登记站点」与「下载目标站点」（`scheme://host[:port]` 完全一致），不一致就不注入 —— 避免把站点 Cookie 发给 CDN 主机。用户手写在「额外请求头」里的内容属显式声明，不做该检查。
 - `onDone` 的 remux 仅对白名单容器（`ts`/`mkv`/`webm`/`flv`/`m4v`/`mov`/`m2ts`/`mpeg`/`mpg`/`ogv`）生效，避免误转 `.zip`/`.pdf`。
 - 插件不修改、不改写任何播放列表内容，只把 `Referer`/`Origin`/`UA` 等请求头交给引擎。
-- Cookie 由 FluxDown 引擎统一管理，插件不单独存储凭据。
 - 本插件不向任何第三方上传数据。
 
 ## 限制
@@ -177,6 +222,8 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 - **SAMPLE-AES / SAMPLE-AES-CTR / FairPlay / Widevine 等 DRM 解密**、**LL-HLS（`#EXT-X-PART` 部分段）**、**真直播无限录制**：属于核心 `hls_downloader` 的能力，插件层够不到。含 Widevine / FairPlay / PlayReady 的流需要 CDM 与许可证，**任何下载工具都无法绕过**；这类场景请用 yt-dlp 委派或 [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE)。插件会在解析时把源的加密方式（METHOD / KEYFORMAT）写进日志，便于判断失败归属。
 - **`#EXT-X-KEY:METHOD=NONE`（AES-128 段之后切回明文段）当前会失败，且不是插件的问题**：核心所依赖的 `m3u8-rs 6.0.1` 有一处 IV 校验写反的上游缺陷，使该标签被降级为未知标签，于是明文段被错误地用上一段的 AES-128 密钥解密，报 `decrypt_segment: … PKCS7 decrypt error (Unpad Error)`。插件不能改写 playlist 内容，无法规避。**完整复现、根因与修复补丁见 [`docs/upstream-m3u8-rs-method-none.md`](docs/upstream-m3u8-rs-method-none.md)**。
 - 播放页解析依赖兜底正则，复杂前端（m3u8 在加密 JSON / 分段加载）仍需自定义 `extractMaster` 或启用 yt-dlp 委派。
+- **剧集/订阅的枚举依赖通用启发式**：只能枚举**写在静态 HTML 里**的分集链接。分集列表由前端 JS 调 API 渲染的站点（典型如 B 站番剧页——实测其页面 `m3u8` 出现 0 次、站内分集链接仅 1 条、无 `__INITIAL_STATE__`）**无法枚举**，这不是缺陷而是通用启发式的天花板；这类站点请走 yt-dlp 委派。
+- **订阅（`subscriptions`）未列入 FluxDown 公开插件文档**：按引擎实现接入（自 v0.4.8 起提供），引擎升级后行为若有变化以引擎源码为准。这也正是 `minAppVersion` 抬到 `0.4.8` 的原因。
 - **去广告不在插件能力范围内**：插件层没有分片级钩子，只能整条 playlist 下载。v1.4.3 起已移除原有的「本地源头去广告」方案（详见上文）。
 
 ## 文件结构
@@ -184,9 +231,11 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 ```text
 .                                    # 仓库根（非插件本体，含附属内容）
 ├── src/                             # ← 插件本体（「从目录安装」/开发模式指向此目录）
-│   ├── manifest.json                # 插件清单（identity、权限、设置、entry）
-│   ├── resolver.js                  # 解析入口：发现 master、选变体、音轨配对、鉴权头、剧集清单
-│   └── hooks.js                     # 钩子：onDone（轨对合并兜底 / remux）、onError、onCancel（清标记）
+│   ├── manifest.json                # 插件清单（identity、权限、设置、entry、auth、subscriptions）
+│   ├── resolver.js                  # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单
+│   ├── hooks.js                     # 钩子：onDone（轨对合并兜底 / remux）、onError、onCancel（清标记）
+│   ├── auth.js                      # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
+│   └── subscribe.js                 # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
 ├── adfilter/                        # 本地去广告清洗服务（独立进程）—— 已归档、不再维护，插件不再对接
 │   ├── m3u8_adclean_server.py       # 清洗服务源码：剔广告段 + 段绝对化 + 逐条剔除日志
 │   ├── ad_patterns.txt              # 广告识别规则（纯文本，改完重启服务生效）
@@ -202,7 +251,9 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 ```
 
 > **插件本体就是 `src/` 目录。** `manifest.json` 必须位于插件文件夹根（即 `src/` 内），
-> `entry` 使用同目录相对路径（`resolver.js` / `hooks.js`）。开发模式下改 `src/*.js` 存盘即热生效。
+> `entry` 使用同目录相对路径（`resolver.js` / `hooks.js` / `auth.js` / `subscribe.js`）。
+> 四个脚本是**彼此独立的 QuickJS 上下文**，不能互相 `require`，共享的纯函数只能逐文件复制。
+> 开发模式下改 `src/*.js` 存盘即热生效。
 
 ## 发布打包
 
@@ -210,9 +261,10 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 
 1. 把 `src/` 下的文件作为 **zip 根** 压缩（`manifest.json` 必须在 zip 根），另加仓库根的 `LICENSE`：
    ```
-   待入包：src/manifest.json、src/resolver.js、src/hooks.js、LICENSE  →  置于 zip 根
+   待入包：src/manifest.json、src/resolver.js、src/hooks.js、
+           src/auth.js、src/subscribe.js、LICENSE  →  置于 zip 根
    ```
-2. 重命名为 **`fluxdown-plugin-m3u8_<版本号>.fxplug`**（例：`fluxdown-plugin-m3u8_1.5.0.fxplug`）。
+2. 重命名为 **`fluxdown-plugin-m3u8_<版本号>.fxplug`**（例：`fluxdown-plugin-m3u8_1.6.0.fxplug`）。
    - 版本号与 `src/manifest.json` 的 `version` 保持一致。
 3. 计算校验和：`sha256sum fluxdown-plugin-m3u8_<版本号>.fxplug`。
 4. `.fxplug` **不进 Git 仓库**（已在 `.gitignore` 忽略），发版时上传到 GitHub Release。
