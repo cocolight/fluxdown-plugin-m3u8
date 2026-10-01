@@ -4,7 +4,7 @@
 // 可切换增强（见插件设置）：
 //   - useYtdlp       : 复杂站交给 yt-dlp 抽直链（增强 B）
 //   - remuxToMp4     : 下载后由 hooks.js 用 ffmpeg 无损转封装为 MP4（增强 A）
-//   - adClean        : 本地源头去广告（增强 C）
+//   - adClean        : 本地源头去广告（增强 C）—— ★ 已停用，代码整体注释保留（见下方同名小节）
 //   - separateAudio  : 解析 #EXT-X-MEDIA / 纯音频变体，返回 audioUrl，由核心自动合并（增强 D）
 // 命名（对应 #568/#301）：播放页取 <title>，直链 m3u8 用 URL 推导；可用 nameTemplate 自定义。
 // 安装：设置 → 扩展 → 插件 → 从目录安装本插件的 src/ 目录（开发模式热读 .js，改完存盘即生效）
@@ -81,8 +81,16 @@ async function marked(ctx, obj) {
   return obj;
 }
 
-// ================= 增强 C：本地源头去广告 =================
-// 把引擎要抓的 playlist 地址改写为指向本地 adfilter 服务的 URL；
+// ================= 增强 C：本地源头去广告（★ 已停用，2026-10-01） =================
+// 停用说明：与之配套的 adfilter/ 本地清洗服务不再更新与维护，故插件侧整体退出该能力。
+//   影响面：① 这里整块注释保留（便于日后恢复）；② 所有返回点改为直接用原始 URL
+//   （不再存在"改写为 127.0.0.1 清洗地址"的路径）；③ manifest 移除 adClean / adCleanServer
+//   两个设置项 —— 插件从此**不读** flux.settings.adClean，即使旧版本残留该键也无效。
+// 为什么 manifest 是"移除"而不是"注释"：引擎 plugin/manifest.rs 的 PluginManifest 带
+//   deny_unknown_fields，且用 serde_json 解析 —— JSON 既不能写注释，也不能塞自定义说明键，
+//   否则整份 manifest 校验失败、插件被跳过。详见本文件头「能力边界」的同类约定。
+/*
+// 原实现：把引擎要抓的 playlist 地址改写为指向本地 adfilter 服务的 URL；
 // 该服务抓源 playlist → 剔广告段 → 段地址绝对化 → 返回干净 playlist。需先启动本地服务。
 function stripAdsEnabled() {
   const on = flux.settings ? flux.settings.adClean : undefined;
@@ -101,6 +109,7 @@ function maybeClean(ctx, u) {
   if (!u) return u;
   return stripAdsEnabled() ? cleanUrl(ctx, u) : u;
 }
+*/
 
 // ================= 请求头体系（Referer / Origin / UA / 自定义头） =================
 // Referer 精确化：优先任务携带的 referrer（通常是播放页完整 URL），回落站点 origin。
@@ -295,11 +304,13 @@ async function resolve(ctx) {
   // 注：variants 非空时顶层 url 允许为空。每一项都可带自己的 audioUrl（核心按轨对任务自动合并）。
   const variants = list.map(function (v) {
     const a = audioSourceFor(ctx, v, opt, false);
-    const o = { label: v.label, url: assertOutputUrl(maybeClean(ctx, v.url), "变体 url") };
+    // 广告过滤已停用：此处原为 maybeClean(ctx, v.url)
+    const o = { label: v.label, url: assertOutputUrl(v.url, "变体 url") };
     if (v.width) o.width = v.width;
     if (v.height) o.height = v.height;
     if (v.bandwidth) o.bandwidth = v.bandwidth;
-    if (a && a.url) o.audioUrl = assertOutputUrl(maybeClean(ctx, a.url), "变体 audioUrl");
+    // 广告过滤已停用：此处原为 maybeClean(ctx, a.url)
+    if (a && a.url) o.audioUrl = assertOutputUrl(a.url, "变体 audioUrl");
     return o;
   });
   const defAudio = audioSourceFor(ctx, chosen, opt, false);
@@ -389,8 +400,7 @@ async function resolveViaYtdlp(ctx) {
     ? sanitize(info.title)
     : nameFromUrl(ctx.url);
   const name = applyNameTemplate(base, partsFor(ctx, null, null));
-  // 注意：此处不套 cleanUrl —— yt-dlp 返回的直链可能是非 playlist（如直连 mp4），
-  // 强行改写到清洗服务语义不确定。去广告目前只覆盖原生解析的返回点。
+  // yt-dlp 直链原样返回（广告过滤已停用，不再有任何 URL 改写环节）
   const out = {
     url: assertOutputUrl(direct, "yt-dlp 直链"),
     fileName: name,
@@ -424,7 +434,8 @@ function assertOutputUrl(u, what) {
   );
 }
 function finalize(ctx, url, fileName, audioUrl) {
-  const out = { url: assertOutputUrl(maybeClean(ctx, url), "顶层 url") };
+  // 广告过滤已停用：顶层 url 不再经 maybeClean 改写，直接用解析得到的原始地址
+  const out = { url: assertOutputUrl(url, "顶层 url") };
   if (fileName) out.fileName = fileName;
   if (audioUrl) out.audioUrl = assertOutputUrl(audioUrl, "audioUrl");
   const ah = authHeaders(ctx);
