@@ -2,7 +2,9 @@
 
 > 依据：FluxDown 官方插件文档 `website/src/content/docs/zh/plugins/{overview,manifest,api-reference}.md`
 > 与引擎源码（`native/engine/src/`，本地副本 `.workbuddy/tmp/_diag/_engine/FluxDown/`）。
-> 核对日期 2026-09-30，对应插件版本 **1.4.2**。
+> 核对日期 2026-10-01，对应插件版本 **1.4.3**。
+> 2026-10-01 本轮：读引擎 `native/engine/src/plugin/runtime.rs` 与 `.../plugin/manifest.rs`，核实三项未接能力
+> （`manifest` / `subscriptions` / `auth`）与 `onCancel`，并更正 §1 / §4 中两处旧判断（详见 §7）。
 >
 > 本文的用途：把「哪些能靠插件补、哪些是接口硬限制」钉死，避免再按二手分析文档
 > 去实现不存在的字段。凡是标 ❌ 的，都已验证接口不存在，**不要尝试**。
@@ -16,7 +18,10 @@
 | `resolve(ctx)` 返回字段**穷举**为：`url`、`audioUrl`、`fileName`、`totalBytes`、`extraHeaders`、`ephemeral`、`rangeSupported`、`variants`、`defaultVariantIndex` | **没有字幕字段**。任何「返回字幕 URL」的设计都不成立 |
 | `variants[]` 每项允许：`label`、`url`、`audioUrl`、`fileName`、`totalBytes`、`bandwidth`、`width`、`height`、`container` | 变体可带 `width`/`height`/`bandwidth`/`container`；**没有 `codecs`**（编码只能在插件的 label 里展示） |
 | `onDone(ctx)` 额外字段：`filePath`、`audioPath`、`muxed` | `muxed` = 轨对任务**是否已成功合并为单文件**；`audioPath` 仅在**核心合并失败降级**时非空 → **核心自己做音视频合并**，插件不要重复合并 |
-| hooks `events` 只接受 `onStart` / `onError` / `onDone` / `onMetaProbed` | 没有 `onCancel` |
+| hooks `events`：公开文档列 4 个（`onStart` / `onError` / `onDone` / `onMetaProbed`），**引擎 `VALID_EVENTS` 实为 5 个（含 `onCancel`）** | 本插件未订阅 `onCancel`（可用于清理 `handledTasks` 标记） |
+| `resolvers[0]` 可带 **`multi: bool`**，配合 `ResolveResult.manifest` | 引擎支持**多文件清单**：声明后可返回 `manifest{name, items[]}`，引擎自动裂变为 N 个子任务（详见 §7） |
+| manifest 额外字段 **`subscriptions[]`**（`{providerId, entry, timeoutMs}`） | 引擎支持**插件订阅源**，entry 定义 `globalThis.subscribe(ctx)`；v1 每插件至多一个 provider（详见 §7） |
+| manifest 额外字段 **`auth`** + `permissions:["auth"]` | 引擎支持**登录认证**，entry 定义 `globalThis.authenticate`；`resolve(ctx).authRef` **仅声明 `auth` 权限的插件才有值**（详见 §7） |
 | **带 resolver 的插件，`onMetaProbed` 永不触发** | 订阅它无意义（加载时还会被记一条警告） |
 | `hooks.match` 只按**任务的原始 URL**过滤 | 播放页入口（原始 URL 不含 `m3u8`）会漏掉所有钩子 → 本插件改用 `taskId` 存储标记 |
 | `permissions` 只接受 `ffmpeg` / `ytdlp` / `auth` | 未知值会让整份 manifest 校验失败 |
@@ -164,8 +169,10 @@ v1.4.1 修掉的 `new URL` 缺陷（QuickJS 无 `URL` 全局对象 → `absUrl()
 | key URI（`#EXT-X-KEY`）单独带鉴权头 | ❌ | 密钥请求由核心引擎发出，插件无法按请求区分；只能通过 `extraHeaders` 全局覆盖 |
 | `ephemeral` 升级为周期性 re-resolve | ❌ | 核心已是「每次开始/恢复都重新执行 `resolve`」的惰性模型，无需插件干预 |
 | **字幕轨道（WebVTT）** | ❌ | 返回值无字幕字段；且 `flux.fs` ≠ ffmpeg 沙箱，抓到的字幕送不进去。**只能识别并记录** |
-| **任务分组（按剧集自动建组）** | ❌ | 官方：插件不能创建任务；无分组接口 |
-| 全钩子通知/日志 | ✅（部分） | 已用 `onDone` + `onError`。`onMetaProbed` 对本插件永不触发；`onStart` 仅纯日志、徒增噪音，未订阅 |
+| **多文件清单 / 批量建任务（`manifest` + `multi`）** | ⚪ | 引擎支持：`resolvers[0].multi=true` 时 `resolve()` 可返回 `manifest{name, items[]}`（1..=1000 条，扁平 items+path），引擎**自动裂变为 N 个子任务**，二段用 `resolver_item`（`<id>` / `<id>@<variantId>`）回调取直链。约束：与 `url`/`variants`/`audioUrl` **互斥**、**仅初段可返回**、`path` 深度 ≤8 且 `path/name` ≤180。**本插件未实现** —— 「按剧集批量下载」的实际可行解（详见 §7） |
+| **订阅源（自动追更）** | ⚪ | 引擎支持：`subscriptions:[{providerId,entry,timeoutMs}]`，v0.4.8 起订阅来源可选插件，条目**自动建任务 / 去重 / 调度 / 重试**。**本插件未实现**（详见 §7） |
+| **登录认证** | ⚪ | 引擎支持：`auth:{entry}` + `permissions:["auth"]`，v0.4.8 起支持 Cookie/Basic/Bearer/Headers + 扫码轮询；凭据经 `ctx.authRef` 自动附加到 `flux.fetch`。**本插件未实现**（详见 §7） |
+| 全钩子通知/日志 | ✅（部分） | 已用 `onDone` + `onError`。`onMetaProbed` 对本插件永不触发；`onStart` 仅纯日志、徒增噪音，未订阅；**`onCancel` 引擎支持（见 §1）但本插件未订阅**，可用于清理任务标记 |
 | 命名模板 | ✅ | `nameTemplate`，占位符 `{title} {res} {lang} {host} {date}` |
 | 合并完整性校验（段数 vs manifest） | ❌ | 插件拿不到下载进度/段清单；`flux.task` 无查询接口 |
 | **SAMPLE-AES / SAMPLE-AES-CTR / FairPlay / Widevine 等 DRM** | ❌ | 解密在核心 `hls_downloader.rs`（只实现 `NONE` / `AES-128`，其余在解析阶段直接拒绝）；插件拿不到 key。含 Widevine/FairPlay/PlayReady 的流**任何工具都无法绕过**（需 CDM + 许可证）。插件侧仅在 `noteEncryption()` 里报明加密方式，不尝试解密 |
@@ -204,4 +211,35 @@ v1.4.1 修掉的 `new URL` 缺陷（QuickJS 无 `URL` 全局对象 → `absUrl()
 - [ ] 音轨分离后产物命名与多轨封装行为，需在真实 fMP4 源上观察（核心如何命名 `.audio.m4a`）。
 - [ ] `extraHeaders` 是否确实作用于**分片与密钥请求**（官方描述是「下载解析后直链时附带」），
       若只作用于首次请求，则 `#EXT-X-KEY` 的防盗链头需要另想办法。
-- [ ] 源码中 `ResolveResult` 还暴露一个 `manifest` 字段（官方文档未列出），语义未核实，本插件未使用。
+- [x] ~~源码中 `ResolveResult` 的 `manifest` 字段语义未核实~~ —— **已核实（2026-10-01，读 `native/engine/src/plugin/runtime.rs`）**：多文件清单，配 `resolvers[0].multi=true` 使用，引擎自动裂变建任务。**本插件未使用**，已列为待补能力（见 §7）。
+
+---
+
+## 7. 未接引擎能力（2026-10-01 核实，公开文档未列）
+
+读引擎源码（`native/engine/src/plugin/runtime.rs`、`.../plugin/manifest.rs`）核实：引擎已支持、本插件**完全未接**的三块能力，均直接命中剧集/动漫站场景。这三项都是「插件不建任务，但引擎据插件输出自动建任务」的机制，因此**不违反**「插件不能创建任务」这一约束。
+
+| # | 能力 | 声明方式 | 价值 | 关键约束 |
+| --- | --- | --- | --- | --- |
+| 1 | **多文件清单（批量建任务）** | `resolvers[0].multi=true` → `resolve()` 返回 `manifest` | 一个剧集页 → 批量 N 集，引擎自动裂变建任务 | 与 `url`/`variants`/`audioUrl` 互斥；**仅初段**可返回（二段拒，防递归）；`items` 1..=1000；`path` ≤8 级、`path/name` ≤180 |
+| 2 | **订阅源（自动追更）** | `subscriptions:[{providerId,entry,timeoutMs}]` → `globalThis.subscribe(ctx)` | 订阅页 → 新集自动入队（去重/调度/重试复用内置能力） | v1 至多一个 provider；`providerId` = 小写字母/数字/`_`/`-`，≤64，且不得为内置保留字 `rss` |
+| 3 | **登录认证** | `auth:{entry,timeoutMs}` + `permissions:["auth"]` → `globalThis.authenticate` | 解锁需登录站点；`ctx.authRef` 自动带凭据（`flux.fetch` 复用） | 声明 `auth.entry` 时 `permissions` 必须含 `auth`，否则整份 manifest 校验失败 |
+
+### 7.1 `manifest` 的契约细节（`ResolveManifest` / `ManifestItem`）
+
+- `ResolveManifest`：`{ name, items: ManifestItem[] }`；`name` 为空时由宿主用母任务文件名/首个条目名兜底。
+- `ManifestItem`：`{ id, name, path, size?, kind, variants? }`
+  - `id`：插件自定义标识，非空、≤200 字符；**二段回调原样回传**在 `ResolveRequest.resolver_item`。
+  - `name`：文件名，须过与 `file_name` 相同的合法性检查（禁 `/`、`\`、`..`、控制字符）。
+  - `path`：组根相对子路径（空 = 根），按 `/` 计深度 ≤8 级，`path + "/" + name` ≤180 字符。
+  - `kind`：`""` / `"file"`（`"folder"` 预留，v1 不实现；其余一律拒绝）。
+  - `variants`：可选的规格列表（≤50），每项 `{id, label, size?}`。
+- **二段解析**：引擎对每个条目以 `resolver_item` = `id`（无规格）或 `id@variantId`（有规格）**再次调用同一个 `resolve()`**；此时 `resolver_item` 非空，须返回**单直链**（返回 `manifest` 会被拒），且变体收敛静默取默认（不为 N 个子任务弹 N 个选择框）。
+
+### 7.2 硬前提（务必遵守）
+
+manifest 为 `deny_unknown_fields` —— **旧版 FluxDown 见到 `multi` / `subscriptions` / `auth` 会拒绝整份 manifest**（表现为插件被跳过，而非忽略该字段）。因此：
+
+1. 落地前必须抬 `minAppVersion`（订阅 / auth 至少 **0.4.8**；`multi` 以其引入版本为准，需确认）；
+2. 建议做成**声明式开关**（默认关），避免老用户升级后被拒装；
+3. 这些字段属引擎契约、**未进公开文档**，存在随版本变动的风险，落地时须绑定实际安装版本复验。
