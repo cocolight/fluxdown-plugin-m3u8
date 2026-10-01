@@ -2,13 +2,14 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-一个 [FluxDown](https://github.com/zerx-lab/FluxDown) 下载器插件：输入播放页或 `master.m3u8`，自动发现正确的播放列表、解析多码率变体，并带上 `Referer`/`Origin`/`UA` 鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持**音视频分离**（返回 `audioUrl`，由核心自动合并）、**纯音频提取**、按编码/画质筛选、**伪 m3u8 检测**、yt-dlp 委派、下载后 remux 为 MP4。
+一个 [FluxDown](https://github.com/zerx-lab/FluxDown) 下载器插件：输入播放页或 `master.m3u8`，自动发现正确的播放列表、解析多码率变体，并带上 `Referer`/`Origin`/`UA` 鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持**音视频分离**（返回 `audioUrl`，由核心自动合并）、**纯音频提取**、按编码/画质筛选、**伪 m3u8 检测**、**剧集页批量下载**、yt-dlp 委派、下载后 remux 为 MP4。
 
-> 适用场景：HLS（`.m3u8`）流媒体下载。需要 FluxDown 桌面端/服务端，推荐 **v0.4.8 及以上**（支持 `.fxplug` 一键安装）。
+> 适用场景：HLS（`.m3u8`）流媒体下载。需要 FluxDown 桌面端/服务端：**最低 0.3.0**（剧集批量下载所需），推荐 **0.4.8 及以上**（支持 `.fxplug` 一键安装）。
 
 ## 功能特性
 
 - **自动发现 master**：直接粘贴 `.m3u8` 直链时直接处理；粘贴播放页时自动从页面源码抠出 `master.m3u8`（支持 `https:\/\/` JSON 转义与相对地址；复杂站点可自定义 `extractMaster`）。
+- **剧集页批量下载（v1.5.0）**：页面里出现「多集」结构时（同时含多集各自的 m3u8，或含一批同构的分集链接），提交链接会先弹出**选集窗口**，可一次勾选多集批量下载。插件只返回清单，**由引擎自动建立任务组**（插件自身依旧不能创建任务）；判定只认强信号，单视频页不会被误判。
 - **多码率变体解析**：解析 `#EXT-X-STREAM-INF`，按带宽降序列出画质（标签含分辨率/码率/编码），支持手动选画质或自动选最高/指定画质。
 - **音视频分离（独立音轨）**：解析 `#EXT-X-MEDIA:TYPE=AUDIO` 与纯音频变体，把音轨地址作为 `audioUrl` 返回，FluxDown 会**自动把视频与音轨合并为单文件**；可按 `LANGUAGE` 指定语言轨。默认 `auto`，只在源明确为纯视频或已单列音轨时才分离，避免音视频合一的流被拆出双音轨。
 - **纯音频提取**：只下独立音轨（音乐/播客场景）。
@@ -46,6 +47,10 @@
 | 设置 | 说明 | 默认 |
 | --- | --- | --- |
 | 目标站点主机 | 仅处理这些主机的「页面 URL」；直链 `.m3u8` 不受限。留空则插件不处理任何页面。逗号分隔。 | 空 |
+| 识别剧集页并弹出选集 | 页面含「多集」结构时，提交后先弹出选集窗口，可勾选多集批量下载（由引擎自动建任务组）。关闭则只解析当前看到的这一条。只影响播放页，粘贴的 `.m3u8` 直链不受影响。 | 开 |
+| 判定为剧集的最少条目数 | 仅用于「页面上没有 m3u8、只有一批分集链接」的情况——链接聚成一簇后达到此条数才算剧集，用于滤掉「上一集/下一集」这类只有两三条链接的页面。 | 3 |
+| 选集窗口最多列出的条目数 | 剧集条目过多时的展示上限（引擎自身上限 1000）。 | 200 |
+| 自定义剧集链接正则 | 高级选项。内置剧集识别在个别站点不适用时，填一个 JS 正则指定「哪些链接算一集」；留空用内置规则。 | 空 |
 | 偏好画质 | 选默认变体时优先：`best` / `1080` / `720` / `480` / `360`（按**高度**比较）。自动选时生效。 | best |
 | 偏好视频编码 | `auto` / `avc`(H.264) / `hevc`(H.265) / `av01`(AV1) / `vp9`。只影响默认选中项，**不会隐藏**其他画质。 | auto |
 | 自动选择 | 开启后不弹画质框，按偏好直接下载。 | 关 |
@@ -67,6 +72,7 @@
 - **播放页**：先在插件设置里填好「目标站点主机」，再把播放页 URL 交给 FluxDown；插件会从页面抠出 m3u8。
   - 复杂站点若兜底正则抠不出，请按站点结构自定义 `src/resolver.js` 里的 `extractMaster()`。
 - **画质**：未开「自动选择」时会弹出画质选择框；默认选中按「偏好画质」算出的变体。
+- **剧集页**：页面含多集结构时（多集各自的 m3u8，或一批同构的分集链接），提交后会先弹出**选集窗口**，勾选即可批量下载。若某个站被误判或漏判，可用「识别剧集页并弹出选集」关闭该行为，或用「自定义剧集链接正则」告诉插件哪些链接算一集。
 
 ## 音视频分离与纯音频提取
 
@@ -144,6 +150,8 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 1. `src/resolver.js` 的 `resolve(ctx)` 判断作用域：
    - 直链 `.m3u8` → 直接拉取。
    - 播放页 → 抓页源码，正则抠 `master.m3u8`。
+   - 播放页若被判定为**剧集页**（v1.5.0）→ 返回**清单**，由**引擎**自动裂变成多个子任务；
+     每个子任务再以条目 id 回调一次 `resolve`（此时 `ctx.resolverItem` 非空），只返回单直链。
 2. 校验返回值确实是 playlist（`#EXTM3U`）；若是 HTML 登录页则报错或交给 yt-dlp 兜底。
 3. 解析 `#EXT-X-STREAM-INF` 变体与 `#EXT-X-MEDIA` 音轨/字幕轨，按带宽排序，依「偏好编码 + 偏好画质」算默认变体（或列出供手选），并给每个变体配上 `audioUrl`。
 4. 返回结果带上 `Referer`（优先播放页 URL）/`Origin`/`User-Agent`/自定义头，标记 `rangeSupported` 以启用多线程分段。
@@ -153,7 +161,7 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 ## 安全与隐私
 
 - 插件只在你配置的「目标站点主机」或直链 `.m3u8` 上生效，不会处理无关页面（fail-closed）。
-- 插件存储里只写入一份「本插件经手的任务 ID → 时间戳」标记（单键、上限 60 条、6 小时后自动过期），用于让钩子只对本插件任务生效；不含任何 URL、Cookie 或媒体信息。
+- 插件存储里只写入两类数据，**都不含任何 Cookie、Token 或凭据**：① 「本插件经手的任务 ID → 时间戳」标记（单键、上限 60 条、6 小时后自动过期），用于让钩子只对本插件任务生效；② 剧集批量下载的清单条目映射（单键、上限 400 条；仅在条目 URL 过长或含 `@` 时才落盘，内容为「条目令牌 → 目标 URL」），用于二段解析取回地址。
 - `onDone` 的 remux 仅对白名单容器（`ts`/`mkv`/`webm`/`flv`/`m4v`/`mov`/`m2ts`/`mpeg`/`mpg`/`ogv`）生效，避免误转 `.zip`/`.pdf`。
 - 插件不修改、不改写任何播放列表内容，只把 `Referer`/`Origin`/`UA` 等请求头交给引擎。
 - Cookie 由 FluxDown 引擎统一管理，插件不单独存储凭据。
@@ -164,7 +172,7 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 以下为**官方接口的硬限制**，不是本插件尚未实现（详见 [`docs/plugin-capability-matrix.md`](docs/plugin-capability-matrix.md)）：
 
 - **字幕（WebVTT）**：resolver 的返回值里没有任何字幕字段；同时 ffmpeg 沙箱只允许访问产物目录内的相对名，而 `flux.fs` 是另一个独立工作区，抓到的字幕文件送不进去。因此**插件单层无法下载/封装/烧录字幕**。插件会识别并记录字幕轨（写日志），但不会下载。
-- **任务分组**：官方明确「插件不能创建任务」，也没有分组接口 —— 无法按剧集自动建组。
+- **插件不能创建任务**：`flux.task` 只有 `requestRetry`，官方也明确插件不能建任务。剧集批量下载（v1.5.0）走的是「插件返回清单 → **引擎**据清单自动裂变为任务组」的机制，插件自身仍不建任务。
 - **`onMetaProbed`**：带 resolver 的插件该钩子永不触发（官方明确），因此 manifest 不订阅它。
 - **SAMPLE-AES / SAMPLE-AES-CTR / FairPlay / Widevine 等 DRM 解密**、**LL-HLS（`#EXT-X-PART` 部分段）**、**真直播无限录制**：属于核心 `hls_downloader` 的能力，插件层够不到。含 Widevine / FairPlay / PlayReady 的流需要 CDM 与许可证，**任何下载工具都无法绕过**；这类场景请用 yt-dlp 委派或 [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE)。插件会在解析时把源的加密方式（METHOD / KEYFORMAT）写进日志，便于判断失败归属。
 - **`#EXT-X-KEY:METHOD=NONE`（AES-128 段之后切回明文段）当前会失败，且不是插件的问题**：核心所依赖的 `m3u8-rs 6.0.1` 有一处 IV 校验写反的上游缺陷，使该标签被降级为未知标签，于是明文段被错误地用上一段的 AES-128 密钥解密，报 `decrypt_segment: … PKCS7 decrypt error (Unpad Error)`。插件不能改写 playlist 内容，无法规避。**完整复现、根因与修复补丁见 [`docs/upstream-m3u8-rs-method-none.md`](docs/upstream-m3u8-rs-method-none.md)**。
@@ -177,8 +185,8 @@ nameTemplate = {title} {res} {host} # 加画质与域名
 .                                    # 仓库根（非插件本体，含附属内容）
 ├── src/                             # ← 插件本体（「从目录安装」/开发模式指向此目录）
 │   ├── manifest.json                # 插件清单（identity、权限、设置、entry）
-│   ├── resolver.js                  # 解析入口：发现 master、选变体、音轨配对、鉴权头
-│   └── hooks.js                     # 钩子：onDone（轨对合并兜底 / remux）、onError（失败日志）
+│   ├── resolver.js                  # 解析入口：发现 master、选变体、音轨配对、鉴权头、剧集清单
+│   └── hooks.js                     # 钩子：onDone（轨对合并兜底 / remux）、onError、onCancel（清标记）
 ├── adfilter/                        # 本地去广告清洗服务（独立进程）—— 已归档、不再维护，插件不再对接
 │   ├── m3u8_adclean_server.py       # 清洗服务源码：剔广告段 + 段绝对化 + 逐条剔除日志
 │   ├── ad_patterns.txt              # 广告识别规则（纯文本，改完重启服务生效）
@@ -204,7 +212,7 @@ nameTemplate = {title} {res} {host} # 加画质与域名
    ```
    待入包：src/manifest.json、src/resolver.js、src/hooks.js、LICENSE  →  置于 zip 根
    ```
-2. 重命名为 **`fluxdown-plugin-m3u8_<版本号>.fxplug`**（例：`fluxdown-plugin-m3u8_1.4.3.fxplug`）。
+2. 重命名为 **`fluxdown-plugin-m3u8_<版本号>.fxplug`**（例：`fluxdown-plugin-m3u8_1.5.0.fxplug`）。
    - 版本号与 `src/manifest.json` 的 `version` 保持一致。
 3. 计算校验和：`sha256sum fluxdown-plugin-m3u8_<版本号>.fxplug`。
 4. `.fxplug` **不进 Git 仓库**（已在 `.gitignore` 忽略），发版时上传到 GitHub Release。
