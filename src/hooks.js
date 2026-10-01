@@ -1,8 +1,9 @@
 // FluxDown M3U8 插件 —— 钩子脚本
-// 订阅 onDone 与 onError：
-//   onDone  - ① 轨对任务合并失败兜底（核心 muxed=false 且留下独立音频文件时，插件补做 mux）
-//             ② 下载后 remux 为 MP4（增强 A，保守白名单）
-//   onError - 记录失败原因（钩子改变不了任务，仅用于可观测性）
+// 订阅 onDone / onError / onCancel：
+//   onDone   - ① 轨对任务合并失败兜底（核心 muxed=false 且留下独立音频文件时，插件补做 mux）
+//              ② 下载后 remux 为 MP4（增强 A，保守白名单）
+//   onError  - 记录失败原因（钩子改变不了任务，仅用于可观测性）
+//   onCancel - 用户取消也是终态，清掉任务标记（官方文档没列这个事件，但引擎 VALID_EVENTS 里有）
 //
 // 为什么需要「任务标记」：
 //   manifest 的 hooks.match 只能拿**任务的原始 URL** 过滤。播放页场景下原始 URL 里
@@ -67,6 +68,15 @@ globalThis.onError = async (ctx) => {
       "[m3u8-resolver] 任务失败 " + String((ctx && ctx.taskId) || "") + ": " + String((ctx && ctx.message) || "")
     );
     await unmark(ctx && ctx.taskId);
+  } catch (e) {}
+};
+
+// ---- 取消：同样是终态，清掉标记，避免它滞留到 TTL 过期 ----
+// onDone / onError 已各自清理，缺了这条时，被用户取消的任务标记会一直留着：
+// 既占满 60 条上限，也可能让一个被复用的 taskId 被误判成「本插件经手」。
+globalThis.onCancel = async (ctx) => {
+  try {
+    if (await isHandled(ctx && ctx.taskId)) await unmark(ctx && ctx.taskId);
   } catch (e) {}
 };
 

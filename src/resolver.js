@@ -34,6 +34,13 @@ function settingStr(key, def) {
   if (v === undefined || v === null) return def || "";
   return String(v);
 }
+// number 型设置（跨端一律字符串序列化，这里统一转整数）
+function settingInt(key, def) {
+  const v = flux.settings ? flux.settings[key] : undefined;
+  if (v === undefined || v === null || v === "") return def;
+  const n = parseInt(String(v), 10);
+  return isNaN(n) ? def : n;
+}
 
 // ================= 任务标记（供 hooks.js 判断「这是本插件经手的任务」） =================
 // 原因见 hooks.js 文件头：hooks.match 只能按原始 URL 过滤，播放页入口 URL 里不含
@@ -165,6 +172,11 @@ function authHeaders(ctx) {
 
 // ================= 主流程 =================
 async function resolve(ctx) {
+  // 二段（引擎按清单条目回调）：resolverItem 非空 → 只解析这一条，收敛为**单直链**。
+  // 必须排在 inScope 之前 —— 二段的目标由插件自己产出，可能指向任意主机，
+  // 不能再受 targetHosts 约束。
+  if (ctx && ctx.resolverItem) return await resolveSecondStage(ctx);
+
   if (!inScope(ctx)) return null; // 不在作用域 → 放行，按原 URL 下载
 
   flux.logger.info("[m3u8-resolver] 进入:", ctx.url);
@@ -197,6 +209,21 @@ async function resolve(ctx) {
     if (page.status !== 200) throw new Error("fetch page " + page.status);
     pageTitle = extractTitle(page.body); // 按网页标题命名
     if (!pageTitle) warnNoTitle(ctx);
+
+    // ---- 剧集页识别（1.5.0）：命中则返回清单，由引擎自动裂变成 N 个子任务 ----
+    // 必须放在 extractMaster 之前判定；只有「强信号」才会命中（见 detectListing 的分层规则）。
+    // 判错的代价是每个单视频页都弹出无意义的选集框，因此这里宁可漏判、不可错判。
+    if (settingBool("detectSeries", true)) {
+      const listing = detectListing(page.body, ctx.url);
+      if (listing && listing.items && listing.items.length) {
+        const mf = await buildManifestResult(pageTitle, listing);
+        if (mf) {
+          flux.logger.info("[m3u8-resolver] 识别为剧集页，" + listing.items.length + " 条，提交清单");
+          return mf;
+        }
+      }
+    }
+
     const found = extractMaster(page.body, ctx.url);
     if (!found) {
       flux.logger.info("[m3u8-resolver] 页面未找到 m3u8，放行");
@@ -574,6 +601,414 @@ function extractTitle(html) {
   return sanitize(base) || null;
 }
 
+// ================= 剧集页识别与多文件清单（1.5.0，multi） =================
+// 机制：引擎支持 resolvers[0].multi=true + ResolveResult.manifest —— 插件返回一个清单，
+//   引擎**自动**把它裂变成 N 个子任务（母任务本身不下载），并对每个条目以
+//   resolverItem=<id>（或 <id>@<variantId>）**再次回调同一个 resolve**，要求返回单直链。
+//   ⇒ 插件依旧不能创建任务，只是把「一页 N 集」表达成清单，由引擎代建。
+//
+// 最大风险是**误判**：一旦把单视频页判成剧集，用户每次提交链接都会弹出无意义的选集框
+//   （桌面端提交单条 http(s) 链接时会先跑一次只读预览，items 非空即弹窗）。
+//   因此本节的判定只认**强信号**，任何不确定一律返回 null = 走原有单视频链路。
+//
+// 分层判定（detectListing）：
+//   Tier-0  提交的是 .m3u8 直链                         → 不做清单（resolve 里已分流）
+//   Tier-1  页面内出现 m3u8：
+//             质量折叠后只剩 1 组                        → 同一视频的多码率，不是剧集
+//             ≥2 组且组间差异位**全部**像集号           → 剧集
+//             ≥2 组但差异位不像集号（不同 CDN / 片段）  → 不是剧集
+//   Tier-2  页面内没有 m3u8：
+//             命中播放器标记（<video>/hls.js/…）         → 单集播放页，放弃
+//                                                           （防「上一集/下一集」被判成剧集）
+//             否则按「链接形态」聚类，取最大簇，
+//             且簇大小 ≥ manifestMinItems                → 剧集
+const QUALITY_SEG_RE = /^(?:\d{2,4}p?|[248]k|4k|8k|uhd|fhd|qhd|hd|sd|hq|lq|high|low|medium|mid|auto|source\d*|master|main|index|playlist|media|manifest|default|original|orig|muxed|dash|hls)$/i;
+const QUALITY_SUFFIX_RE = /(?:[._-](?:\d{3,4}p|[248]k|uhd|fhd|hd|sd|hq|lq|high|low|auto|source|master|index|playlist|media|manifest))+$/i;
+// 预告 / 花絮 / 广告段：命中即从候选里剔除。
+// ★ 与原设计相比**补了边界** —— 否则 `op` 会命中 `top`、`open`，把正常剧集页整片杀掉。
+const MEDIA_NOISE_RE = /(?:^|[._\-\/])(?:trailer|preview|teaser|sample|ad|ads|advert|bumper|intro|outro|pv|promo|behind|making)(?:$|[._\-\/])/i;
+const EPISODE_TOKEN_RE = /^(?:ep|episode|e|chapter|ch|part|pt|p|vol|volume|s\d+)?[-_]?(?:\d{1,4})$/i;
+const HEX_ID_SEG_RE = /^[0-9a-f]{6,}$/i;
+const PLAYER_MARK_RE = /<video[\s>]|<source[\s>]|hls\.js|Hls\.|videojs|jwplayer|dplayer|ckplayer|artplayer/i;
+const EXCLUDE_LINK_RE = /(?:login|logout|signin|signup|register|about|contact|help|support|terms|privacy|tags?|category|search|comment|share|app|apk|ios|android|cart|user|profile|account|follow|subscribe|rss|sitemap)(?:$|[/?#])/i;
+const STATIC_EXT_RE = /\.(?:png|jpe?g|gif|svg|webp|css|js|woff2?|ico|json|xml|txt|pdf|zip)(?:$|\?)/i;
+const MEDIA_EXT_TAIL_RE = /\.(?:m3u8|m3u|ts|mp4)$/i;
+// 与 extractMaster 内的字面量正则同源，只多了 g 标志（用于一次取全部匹配）
+const ABS_MASTER_RE_G = /(https?:\/\/[^"'\\\s<>]+?\.m3u8(?:\?[^"'\\\s<>]*)?)/gi;
+const REL_MASTER_RE_G = /["']([^"'<>\s]+?\.m3u8(?:\?[^"'<>\s]*)?)["']/gi;
+const LINK_ATTR_RE = /(?:href|src)\s*=\s*["']([^"'<>\s]+)["']/gi;
+
+// 页面里出现的**全部** m3u8（去重）。
+// ★ 关键不变量：返回值 [0] 与 extractMaster(html, base) 完全一致 ——
+//   两者用同一套正则、同一优先级（先全部绝对、再全部相对），只是这里收集而不提前返回。
+//   所以「单视频分支」的输出与 1.4.x 逐字相同，现有回归断言不受影响。
+function extractAllMasters(html, base) {
+  if (!html) return [];
+  const norm = String(html).replace(/\\\//g, "/"); // 与 extractMaster 相同的 JS/JSON 转义归一
+  const out = [];
+  const seen = {};
+  const push = function (u) {
+    if (!u || seen[u]) return;
+    seen[u] = 1;
+    out.push(u);
+  };
+  let m;
+  ABS_MASTER_RE_G.lastIndex = 0;
+  while ((m = ABS_MASTER_RE_G.exec(norm))) push(m[1]);
+  REL_MASTER_RE_G.lastIndex = 0;
+  while ((m = REL_MASTER_RE_G.exec(norm))) {
+    const abs = absUrl(m[1], base);
+    if (/^https?:\/\//i.test(abs)) push(abs);
+  }
+  return out.slice(0, 500); // 上限：避免畸形页面把内存打满
+}
+
+// 质量折叠后的分组键：把「同一视频的不同码率」折成同一个键。
+//   ① 末段先剥容器扩展名（720p.m3u8 → 720p）；
+//   ② 整段命中 QUALITY_SEG_RE、或尾部命中 QUALITY_SUFFIX_RE 的，折成 "*"；
+//   ③ **丢弃 query/hash**（多为 CDN 签名，会让同一条目被拆成多组）。
+//   保留 host：不同站点的同名路径不该并组。
+function canonicalGroupKey(u) {
+  const p = parseUrl(u);
+  if (!p) return String(u);
+  const segs = String(p.pathname).split("/");
+  const out = [];
+  for (let i = 0; i < segs.length; i++) {
+    let s = segs[i];
+    if (i === segs.length - 1) s = s.replace(MEDIA_EXT_TAIL_RE, "");
+    s = s.replace(QUALITY_SUFFIX_RE, "");
+    if (s && QUALITY_SEG_RE.test(s)) s = "*";
+    out.push(s);
+  }
+  return p.host + out.join("/");
+}
+
+// 预告 / 花絮 / 广告段（按 pathname 判断）
+function isMediaNoise(u) {
+  const p = parseUrl(u);
+  const s = p ? String(p.pathname) : String(u);
+  return MEDIA_NOISE_RE.test(s);
+}
+
+// 单个段是否「像集号」：ep12 / E03 / 第 5 集 / part2 / s01e02 的 e02 段 / 6 位以上十六进制 ID
+function isEpisodeToken(s) {
+  const t = String(s == null ? "" : s);
+  return EPISODE_TOKEN_RE.test(t) || HEX_ID_SEG_RE.test(t);
+}
+
+// 组键之间是否只差「集号」。要求**每一个**差异位都像集号 ——
+// 这样「不同 CDN」「不同清晰度目录」这类差异不会被误判成剧集。
+function groupsDifferByEpisode(keys) {
+  if (!keys || keys.length < 2) return false;
+  const parts = keys.map(function (k) { return String(k).split("/"); });
+  const n = parts[0].length;
+  for (let i = 1; i < parts.length; i++) if (parts[i].length !== n) return false; // 结构不同 → 保守放弃
+  let diff = 0;
+  for (let i = 0; i < n; i++) {
+    const vals = [];
+    for (let j = 0; j < parts.length; j++) if (vals.indexOf(parts[j][i]) < 0) vals.push(parts[j][i]);
+    if (vals.length < 2) continue; // 这一位所有键都相同
+    for (let j = 0; j < vals.length; j++) if (!isEpisodeToken(vals[j])) return false;
+    diff++;
+  }
+  return diff > 0;
+}
+
+// HTML 实体解码。顺序要紧：先解具体实体，最后解 &amp;，
+// 否则 "&amp;lt;"（字面量 "&lt;"）会被误解成 "<"。
+function decodeEntities(s) {
+  return String(s == null ? "" : s)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+// 用户自定义的剧集链接正则（高级逃生舱）；非法正则只告警不抛错
+function buildUserPattern() {
+  const raw = settingStr("episodeLinkPattern", "").trim();
+  if (!raw) return null;
+  try {
+    return new RegExp(raw, "i");
+  } catch (e) {
+    flux.logger.warn("[m3u8-resolver] episodeLinkPattern 不是合法正则，已忽略:", raw);
+    return null;
+  }
+}
+
+// 链接形态模板：抹掉数字，让 /ep1/x.html 与 /ep2/x.html 归为同一形态
+function linkTemplate(u) {
+  const p = parseUrl(u);
+  if (!p) return "";
+  return String(p.pathname).replace(/\d+/g, "#");
+}
+// 取 pathname 里**最后一个**数字串当序号：集号通常靠后，避免被 /2024/ 这类年份带偏
+function lastOrdinal(u) {
+  const p = parseUrl(u);
+  const s = p ? String(p.pathname) : String(u);
+  const ms = s.match(/\d{1,6}/g);
+  return ms && ms.length ? +ms[ms.length - 1] : 0;
+}
+function sortByOrdinal(urls) {
+  return urls.slice().sort(function (a, b) {
+    const x = lastOrdinal(a);
+    const y = lastOrdinal(b);
+    if (x !== y) return x - y;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
+
+// Tier-2：页面里没有 m3u8 时，退而求其次找「一批同构的剧集链接」
+function collectEpisodeLinks(html, base, minItems) {
+  const pageHost = hostOf(base);
+  if (!pageHost) return null;
+  const userPat = buildUserPattern();
+  const out = [];
+  const seen = {};
+  LINK_ATTR_RE.lastIndex = 0;
+  let m;
+  while ((m = LINK_ATTR_RE.exec(html))) {
+    const raw = m[1];
+    if (!raw || raw.charAt(0) === "#") continue;
+    if (/^(?:javascript:|mailto:|data:|tel:)/i.test(raw)) continue;
+    const abs = absUrl(decodeEntities(raw), base);
+    if (!/^https?:\/\//i.test(abs)) continue;
+    if (hostOf(abs) !== pageHost) continue; // 只认同站，挡掉外链噪声
+    if (STATIC_EXT_RE.test(abs)) continue;
+    if (EXCLUDE_LINK_RE.test(abs)) continue;
+    if (isMediaNoise(abs)) continue;
+    if (userPat && !userPat.test(abs)) continue;
+    if (seen[abs]) continue;
+    seen[abs] = 1;
+    out.push(abs);
+  }
+  if (out.length < minItems) return null;
+  // 按形态聚类，取最大簇（同一部剧的分集链接形态必然一致）
+  const order = [];
+  const clusters = {};
+  for (let i = 0; i < out.length; i++) {
+    const t = linkTemplate(out[i]);
+    if (!clusters[t]) { clusters[t] = []; order.push(t); }
+    clusters[t].push(out[i]);
+  }
+  let best = null;
+  for (let i = 0; i < order.length; i++) {
+    const c = clusters[order[i]];
+    if (!best || c.length > best.length) best = c;
+  }
+  if (!best || best.length < minItems) return null;
+  return sortByOrdinal(best);
+}
+
+// 分层判定。返回 { items:[{url,name}] } 或 null（= 不是剧集，放行走单视频链路）
+function detectListing(pageHtml, pageUrl) {
+  if (!pageHtml) return null;
+  const minItems = settingInt("manifestMinItems", 3);
+  const maxItems = Math.max(1, settingInt("manifestMaxItems", 200));
+
+  // ---- Tier-1：页面里直接有 m3u8 ----
+  const all = extractAllMasters(pageHtml, pageUrl).filter(function (u) { return !isMediaNoise(u); });
+  if (all.length) {
+    const groups = [];
+    const idx = {};
+    for (let i = 0; i < all.length; i++) {
+      const k = canonicalGroupKey(all[i]);
+      if (idx[k] === undefined) { idx[k] = groups.length; groups.push({ key: k, url: all[i] }); }
+    }
+    if (groups.length < 2) return null; // 只有一组 = 同一视频的多码率
+    if (!groupsDifferByEpisode(groups.map(function (g) { return g.key; }))) return null;
+    return {
+      items: groups.slice(0, maxItems).map(function (g) {
+        return { url: g.url, name: nameFromUrl(g.url) };
+      }),
+    };
+  }
+
+  // ---- Tier-2：页面里没有 m3u8 ----
+  if (PLAYER_MARK_RE.test(pageHtml)) return null; // 单集播放页 → 放弃，防「上一集/下一集」误判
+  const links = collectEpisodeLinks(pageHtml, pageUrl, minItems);
+  if (!links) return null;
+  return {
+    items: links.slice(0, maxItems).map(function (u) {
+      return { url: u, name: nameFromUrl(u) };
+    }),
+  };
+}
+
+// ---- 清单条目 id 编解码 ----
+// 引擎对清单条目 id 的唯一要求是「非空、≤200 字符、不透明」，回调时**原样**放回
+// ResolveRequest.resolverItem。于是短 URL 直接内嵌，超长的落 storage 换 token。
+// ★ 含 "@" 的 URL 必须走 token 分支：引擎把 resolverItem 当 `<id>@<variantId>` 解析。
+const ITEM_KEY = "itemMap"; // 单键存储（规避键数上限），值是 {token: url}
+const ITEM_MAX = 400;
+function fnv1a32(s) {
+  let h = 0x811c9dc5;
+  const str = String(s);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+  }
+  return (h >>> 0).toString(16);
+}
+async function encodeItem(url) {
+  const u = String(url || "");
+  if (!u) return "";
+  if (u.length <= 190 && u.indexOf("@") < 0) return "u:" + u;
+  const token = "k" + fnv1a32(u);
+  try {
+    if (flux.storage) {
+      const raw = await flux.storage.get(ITEM_KEY);
+      let map = {};
+      try { map = raw ? JSON.parse(raw) : {}; } catch (e) { map = {}; }
+      if (!map || typeof map !== "object") map = {};
+      map[token] = u;
+      const keys = Object.keys(map);
+      if (keys.length > ITEM_MAX) {
+        for (let i = 0; i < keys.length - ITEM_MAX; i++) delete map[keys[i]];
+      }
+      await flux.storage.set(ITEM_KEY, JSON.stringify(map));
+    }
+  } catch (e) {
+    /* 落库失败仍返回 token：二段解码失败会放行，不会误下 */
+  }
+  return "k:" + token;
+}
+async function decodeItem(v) {
+  const s = String(v == null ? "" : v);
+  if (s.indexOf("u:") === 0) return s.slice(2);
+  if (s.indexOf("k:") !== 0) return null;
+  const token = s.slice(2);
+  try {
+    if (!flux.storage) return null;
+    const raw = await flux.storage.get(ITEM_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    return map && map[token] ? String(map[token]) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 引擎 check_file_name 会拒收含 ".."、"/"、"\"、控制字符的名字。
+// sanitizeAssetName 已经处理了 / \ : * ? " < > | 与空白，这里再补 ".." 与控制字符。
+function safeFileName(s) {
+  let t = String(s == null ? "" : s).replace(/[\u0000-\u001F\u007F]/g, "");
+  t = sanitizeAssetName(t);
+  t = t.replace(/\.{2,}/g, "_");
+  t = t.replace(/^\.+/, "");
+  return t.slice(0, 100);
+}
+// 同层重名追加 _2 / _3（清单条目名即子任务文件名，重名会互相覆盖）
+function uniqueName(base, used) {
+  let nm = base || "video";
+  if (!/\.(?:mp4|ts|mkv|webm|m4a)$/i.test(nm)) nm += ".mp4"; // HLS 产物最终是 mp4，先给对扩展名
+  const dot = nm.lastIndexOf(".");
+  const stem = dot > 0 ? nm.slice(0, dot) : nm;
+  const ext = dot > 0 ? nm.slice(dot) : "";
+  if (used[stem] === undefined) {
+    used[stem] = 1;
+    return nm;
+  }
+  used[stem]++;
+  return stem + "_" + used[stem] + ext;
+}
+
+// 把 listing 变成引擎要的 ResolveResult：**只含 manifest**。
+// 引擎侧对 `manifest` 与 `url`/`variants`/`audioUrl` 是互斥校验（fail-closed），多带一个字段整次解析就被拒。
+async function buildManifestResult(pageTitle, listing) {
+  try {
+    const prefix = pageTitle ? sanitizeAssetName(pageTitle) : "";
+    const used = {};
+    const items = [];
+    for (let i = 0; i < listing.items.length; i++) {
+      const it = listing.items[i];
+      const id = await encodeItem(it.url);
+      if (!id) continue;
+      const rawName = prefix ? prefix + " " + (it.name || "") : it.name || "";
+      const nm = uniqueName(safeFileName(rawName) || "video_" + (i + 1), used);
+      items.push({ id: id, name: nm, path: "", kind: "file" });
+    }
+    if (!items.length) return null;
+    return { manifest: { name: prefix || "", items: items } };
+  } catch (e) {
+    flux.logger.warn("[m3u8-resolver] 构造剧集清单失败，回退单视频解析:", String(e));
+    return null;
+  }
+}
+
+// ---- 二段解析：引擎拿着条目 id 再调一次 resolve，要求**单直链** ----
+// 约束（引擎 validate_resolve_output 是同口径 fail-closed）：
+//   · 不得再返回 manifest（防递归裂变）；
+//   · 返回值里 url 与 variants/audioUrl 语义互斥，这里只走 finalize（单直链）；
+//   · 不传 fileName —— 子任务沿用清单条目名；
+//   · 画质/音轨设置照常生效，但**不再弹框**（N 个子任务弹 N 个框是不可接受的）。
+async function resolveSecondStage(ctx) {
+  const target = await decodeItem(ctx.resolverItem);
+  if (!target) {
+    flux.logger.warn("[m3u8-resolver] 二段：条目已失效（多为插件重装后令牌丢失），放行");
+    return null;
+  }
+  flux.logger.info("[m3u8-resolver] 二段解析:", target);
+
+  const playlistUrl = target;
+  let body;
+  if (isPlaylistUrl(target)) {
+    const r = await flux.fetch({ url: target, headers: fetchHeaders(ctx, refererValue(ctx)) });
+    if (r.status !== 200) throw new Error("fetch playlist " + r.status);
+    body = r.body;
+  } else {
+    // 条目本身是剧集页：再抓一次页面，取其中第一个 m3u8
+    const page = await flux.fetch({ url: target, headers: fetchHeaders(ctx, refererValue(ctx)) });
+    if (page.status !== 200) throw new Error("fetch page " + page.status);
+    const found = extractMaster(page.body, target);
+    if (!found) {
+      flux.logger.warn("[m3u8-resolver] 二段：条目页未找到 m3u8，放行");
+      return null;
+    }
+    const r = await flux.fetch({ url: found, headers: fetchHeaders(ctx, target) });
+    if (r.status !== 200) throw new Error("fetch master " + r.status);
+    body = r.body;
+  }
+
+  if (!isPlaylistBody(body)) {
+    throw new Error("清单条目返回内容不是合法 m3u8（可能需登录或链接已失效）");
+  }
+  noteEncryption(ctx, body);
+
+  const parsed = parseMaster(body, playlistUrl);
+  if (!parsed.variants.length) {
+    if (isMediaPlaylist(body)) return await marked(ctx, finalize(ctx, playlistUrl, null, null));
+    throw new Error("master 中未解析到变体");
+  }
+
+  const audioVariants = [];
+  const videoVariants = [];
+  for (let i = 0; i < parsed.variants.length; i++) {
+    if (isAudioOnlyVariant(parsed.variants[i])) audioVariants.push(parsed.variants[i]);
+    else videoVariants.push(parsed.variants[i]);
+  }
+  const list = videoVariants.length ? videoVariants : parsed.variants;
+  const chosen = list[pickVariant(list, settingStr("preferResolution", "best"), settingStr("preferCodec", "auto").toLowerCase())];
+
+  const opt = {
+    mode: settingStr("separateAudio", "auto").toLowerCase(),
+    lang: settingStr("audioLang", "").trim(),
+    renditions: parsed.audioRenditions,
+    audioVariants: audioVariants,
+  };
+
+  if (settingBool("audioOnly", false)) {
+    const a = audioSourceFor(ctx, chosen, opt, true);
+    if (!a || !a.url) {
+      throw new Error("纯音频提取：该条目未提供独立音轨，无法在下载层分离。请关闭「纯音频提取」后重试。");
+    }
+    return await marked(ctx, finalize(ctx, a.url, null, null));
+  }
+
+  const a = audioSourceFor(ctx, chosen, opt, false);
+  return await marked(ctx, finalize(ctx, chosen.url, null, a && a.url ? a.url : null));
+}
+
 // ================= 通用解析 =================
 const RE_AUDIO_CODEC = /(mp4a|ac-3|ec-3|ac-4|opus|vorbis|flac|dtsc|dtsh|dtsl|dtse|mp3)/i;
 const RE_VIDEO_CODEC = /(avc1|avc3|hvc1|hev1|av01|vp09|vp9|vp08|vp8|dvh1|dvhe|mp4v)/i;
@@ -947,6 +1382,9 @@ function sanitize(s) {
 }
 // 作用域：直接 .m3u8 一律处理；页面 URL 仅处理配置好的目标站
 function inScope(ctx) {
+  // 二段 / 订阅条目：地址是插件自己产出的精细目标，一律处理。
+  // 少了这行，未配 targetHosts 时清单子任务会被放行成「原样下载」→ 下载到 HTML。
+  if (ctx && ctx.resolverItem) return true;
   if (isPlaylistUrl(ctx.url)) return true;
   const raw = settingStr("targetHosts", "").trim();
   if (!raw) return false; // 未配置目标站 → 不处理页面
