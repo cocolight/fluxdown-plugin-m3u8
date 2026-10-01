@@ -3,7 +3,7 @@
   "name": "M3U8 发现与变体解析器",
   "version": "1.7.0",
   "minAppVersion": "0.4.8",
-  "description": "输入播放页 URL 或 master.m3u8，自动发现播放列表、解析多码率变体，并带上 Referer/Origin/UA 等鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。支持画质与编码筛选、音视频分离与纯音频提取、剧集页批量下载、登录凭据、订阅追更、反爬站处理（自动通过防抓页校验、跟随内嵌播放器）、yt-dlp 委派、下载后转封装为 MP4 与智能命名。",
+  "description": "把播放页或 .m3u8 链接解析成可下载的 HLS 播放列表：自动选清晰度、补齐防盗链请求头，支持剧集批量、登录站点、订阅追更与反爬站处理。",
   "homepage": "https://github.com/cocolight/fluxdown-plugin-m3u8",
   "permissions": ["ffmpeg", "ytdlp", "auth"],
   "resolvers": [
