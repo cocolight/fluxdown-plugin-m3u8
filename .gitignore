@@ -10,8 +10,6 @@ build/
 _build*.py
 _build*.exe
 _build*.cmd
-# 例外：adfilter 的正式打包脚本需要入库（README 有引用，保证构建可复现）
-!adfilter/_build_exe.py
 
 # Nuitka 中间产物
 *.build/

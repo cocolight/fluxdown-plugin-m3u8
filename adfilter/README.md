@@ -1,5 +1,9 @@
 # adfilter —— 源头去广告本地清洗服务
 
+> **已归档，自插件 v1.4.3 起停用。** 插件侧的源头去广告能力已下线，相关设置项
+> （「尝试去广告」「去广告服务地址」）**已从插件中移除**，插件不再把 playlist 改写指向本服务。
+> 本目录作为历史实现保留，不再维护；下文「与插件对接」章节仅为存档说明。
+
 FluxDown 插件「增强 C：本地源头去广告」的**外置**组件。它是一个独立常驻的服务进程
 （仅 Python 3 标准库，无第三方依赖），与插件本体解耦：插件只负责把引擎要抓的
 playlist 地址改写为指向本服务，**清洗逻辑全部在这里**。
@@ -102,7 +106,9 @@ curl http://127.0.0.1:8787/health
 
 未命中广告时输出 `[clean] 无广告命中，原样透传  ←  <src>`，加 `--quiet` 可只保留汇总行。
 
-## 与插件对接
+## 与插件对接（已停用，存档）
+
+> 下列设置项自插件 v1.4.3 起**已从 manifest 移除**，插件不再改写 playlist，本服务不再被插件调用。
 
 在 FluxDown 插件设置里：
 
@@ -111,27 +117,24 @@ curl http://127.0.0.1:8787/health
 | 尝试去广告（源头跳过广告段） | 开 |
 | 去广告服务地址 | `http://127.0.0.1:8787`（须与服务启动参数一致） |
 
-## 重新编译 exe（Nuitka）
+## 重新编译 exe（Nuitka，可选）
 
-前置：Python 3.9+、`pip install nuitka zstandard`、一个 C 编译器
-（MSVC 的 C++ 工作负载，或 `--mingw64` 让 Nuitka 自动下载）。
+> 原打包脚本 `_build_exe.py` **已移除**（仓库根 README 有同款说明）。以下为自行编译的参考命令。
 
-```bat
-python _build_exe.py               :: 单文件 exe → dist\m3u8_adclean_server.exe
-python _build_exe.py --standalone  :: 目录版（启动更快、杀软误报更少）
-```
-
-等价的原生命令（便于自行调整）：
+前置：Python 3.9+、`pip install nuitka`。
 
 ```bat
-python -m nuitka --onefile --assume-yes-for-downloads ^
-  --windows-console-mode=force --output-dir=dist ^
-  --output-filename=m3u8_adclean_server.exe ^
-  --nofollow-import-to=tkinter,unittest,doctest,test ^
+python -m nuitka --onefile --zig --assume-yes-for-downloads ^
+  --output-dir=dist --output-filename=m3u8_adclean_server.exe ^
+  --windows-console-mode=force --nofollow-import-to=tkinter,unittest,doctest,test ^
   m3u8_adclean_server.py
 ```
 
-> `_build_exe.py` 是本地构建工具，已被 `.gitignore` 的 `_build*.py` 忽略，不入库。
+- **Python ≥ 3.13 请直接用 `--zig`**（Nuitka 自动下载 Zig）：Nuitka 4.2.2 的 `--mingw64` 只支持
+  Python ≤ 3.12，而它在 3.13/3.14 上的 MSVC/Windows SDK 探测存在误报（机器上装了 VS + SDK 也会报
+  `Windows SDK must be installed`）。
+- 编译前请确保 `dist/` 下没有上次失败的残留（`*.build` / `*.onefile-build`），否则 Nuitka 删不掉会抛 `WinError 5`。
+- 产物在 `adfilter/dist/`，已被 `.gitignore` 忽略，**不入库**。
 
 ## 注意
 
