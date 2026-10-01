@@ -153,9 +153,15 @@ function customHeaders() {
 }
 // 给 flux.fetch 用：Referer + UA + 自定义头
 // （注意：manifest/分片 URL 的抓取也必须带头，否则站方返回的是登录页而非 playlist）
-function fetchHeaders(ctx, referer) {
+// rc / targetUrl 可选（1.7.0）：带上本次解析中已解出的防抓页 Cookie，按目标 host 匹配。
+// 不传 = 旧行为，既有调用点零影响。
+function fetchHeaders(ctx, referer, rc, targetUrl) {
   const h = customHeaders();
   if (referer) h["Referer"] = referer;
+  if (rc && targetUrl) {
+    const ck = rc.cookies[hostOf(targetUrl)];
+    if (ck) h["Cookie"] = mergeCookie(h["Cookie"], ck);
+  }
   return h;
 }
 // ---- 认证凭据注入（1.6.0）----
@@ -262,12 +268,196 @@ async function authHeadersAsync(ctx, targetUrl) {
   return { extraHeaders: extra };
 }
 
+// ================= 防抓页挑战与播放器跟随（1.7.0）=================
+// 两类「本会失败、直接下成 HTML」的反爬形态。两者都是纯 HTTP GET + 请求头，
+// 不需要 JS 引擎（沙箱里本来也没有）：
+//   Part A 防抓页 Cookie 挑战：先返回极小的「安全检查」页，用内联脚本种下
+//          document.cookie 后 location.replace 重载。解出该 Cookie、对同一地址重取一次。
+//   Part B 内嵌播放器跟随：页面里没有字面 m3u8，播放器被放在 <iframe> 里（maccms 常见）
+//          → 跟进该地址再解析。
+// 两者都严格 fail-closed：解不出 / 跟不到 → 退回原有行为，绝不比现状更差。
+// ★ 天花板：真正的 JS 指纹 / captcha 型挑战无解（无 DOM、无 JS 执行）→ 仍走浏览器扩展。
+
+// ---- 单次 resolve 的内存上下文（不落 flux.storage，维持 README 的隐私承诺）----
+const RESOLVE_FETCH_CAP = 12; // 单次 resolve 的 flux.fetch 硬上限，防重定向 / 嵌套放大
+function newResolveCtx() {
+  return { cookies: {}, fetches: 0 };
+}
+// 合并两个 Cookie 串：按 name 去重（后者覆盖），分号拼接。任一为空则返回另一个。
+function mergeCookie(existing, add) {
+  const a = String(existing == null ? "" : existing).trim();
+  const b = String(add == null ? "" : add).trim();
+  if (!a) return b;
+  if (!b) return a;
+  const out = [];
+  const at = {};
+  const put = function (s) {
+    const parts = String(s).split(";");
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i].trim();
+      if (!seg) continue;
+      const eq = seg.indexOf("=");
+      const k = (eq > 0 ? seg.slice(0, eq) : seg).trim().toLowerCase();
+      if (!k) continue;
+      if (Object.prototype.hasOwnProperty.call(at, k)) out[at[k]] = seg;
+      else {
+        at[k] = out.length;
+        out.push(seg);
+      }
+    }
+  };
+  put(a);
+  put(b);
+  return out.join("; ");
+}
+
+// ---- Part A：防抓页 Cookie 挑战 ----
+// 挑战页体积极小（实测 599 字节），且必含 eval([…].map(…String.fromCharCode(c^K)…))
+// 体积极小是重要判据：正常页面不会这么小，而大页面里偶然出现该片段无害（仅多一次重取）。
+const CHALLENGE_MAX_BYTES = 8192;
+const CHALLENGE_MAX_CODES = 20000; // 解码数组长度上限，防超大脚本
+// 宽松匹配：变量名 / 空白 / 箭头函数 / 十六进制 key 均可变
+//   eval([105,98,…].map(function(c){return String.fromCharCode(c^13);}).join(""))
+const EVAL_XOR_RE = /eval\s*\(\s*\[([\d,\s]+)\]\s*\.\s*map\s*\(\s*(?:function\s*\(\s*\w+\s*\)\s*\{\s*return\s+|\w+\s*=>\s*(?:\{\s*return\s+)?)String\.fromCharCode\s*\(\s*\w+\s*\^\s*(0[xX][0-9a-fA-F]+|\d+)\s*\)/i;
+// 体积极小 + 含 XOR-eval + 不是 playlist ⇒ 判定为防抓页挑战
+function looksLikeChallenge(body) {
+  if (!body) return false;
+  const s = String(body);
+  if (s.length > CHALLENGE_MAX_BYTES) return false;
+  if (/#EXTM3U/i.test(s)) return false; // 已经是 playlist，不是挑战页
+  const m = s.match(EVAL_XOR_RE);
+  if (!m) return false;
+  return m[1].split(",").length <= CHALLENGE_MAX_CODES;
+}
+// 解 XOR → 明文 JS（不匹配 / 超限 → null）
+function decodeEvalXor(html) {
+  if (!html) return null;
+  const m = String(html).match(EVAL_XOR_RE);
+  if (!m) return null;
+  const parts = m[1].split(",");
+  if (!parts.length || parts.length > CHALLENGE_MAX_CODES) return null;
+  const kv = m[2];
+  const k = kv.charAt(0) === "0" && (kv.charAt(1) === "x" || kv.charAt(1) === "X") ? parseInt(kv, 16) : parseInt(kv, 10);
+  if (!isFinite(k)) return null;
+  let out = "";
+  for (let i = 0; i < parts.length; i++) {
+    const t = parts[i].trim();
+    if (!t) continue;
+    const n = parseInt(t, 10);
+    if (!isFinite(n) || n < 0) return null;
+    out += String.fromCharCode(n ^ k);
+  }
+  return out;
+}
+// 从解出的 JS 里取 document.cookie="name=value;path=…" 的 name=value
+const COOKIE_ASSIGN_RE = /document\s*\.\s*cookie\s*=\s*["'`]([^"'`]+)["'`]/i;
+function extractCookieAssignment(js) {
+  if (!js) return null;
+  const m = String(js).match(COOKIE_ASSIGN_RE);
+  if (!m) return null;
+  const pair = String(m[1]).split(";")[0].trim(); // 剥掉 ;path / ;max-age 等属性
+  const eq = pair.indexOf("=");
+  if (eq <= 0 || eq >= pair.length - 1) return null; // name / value 均须非空
+  return pair;
+}
+// 一站式：挑战页 → { cookie }
+function solveChallenge(body) {
+  if (!looksLikeChallenge(body)) return null;
+  const js = decodeEvalXor(body);
+  if (!js) return null;
+  const cookie = extractCookieAssignment(js);
+  if (!cookie) return null;
+  return { cookie: cookie };
+}
+
+// ---- Part B：内嵌播放器（iframe / maccms player_data）跟随 ----
+const IFRAME_SRC_RE = /<iframe\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
+// maccms 的 "link" 值形如 "\/vod-play\/11076-1-1\/"（JSON 转义），故此处不能排除反斜杠，
+// 由 findPlayTarget 统一做 \/ → / 还原，再用 isFollowableUrl 过滤伪协议。
+const PLAYER_LINK_RE = /["']link["']\s*:\s*["']([^"']+)["']/i;
+function isFollowableUrl(u) {
+  const s = String(u == null ? "" : u).trim();
+  if (!s) return false;
+  if (/^(?:javascript|about|data|blob|mailto|tel):/i.test(s)) return false;
+  if (s.charAt(0) === "#") return false;
+  return /^https?:\/\//i.test(s);
+}
+// 页面内的播放器地址：① <iframe src>（同站优先）② maccms player_data 的 "link" 兜底
+function findIframeSrc(html, base) {
+  if (!html) return null;
+  const s = String(html);
+  const cands = [];
+  IFRAME_SRC_RE.lastIndex = 0;
+  let m;
+  while ((m = IFRAME_SRC_RE.exec(s))) {
+    const raw = String(m[1]).replace(/\\\//g, "/").trim();
+    // ★ 必须在绝对化**之前**排除伪协议：否则 absUrl 会把 javascript:void(0) 当成相对路径，
+    //   拼成 https://host/javascript:void(0) 这类垃圾地址（且它反过来能通过 isFollowableUrl）。
+    if (!raw || raw.charAt(0) === "#" || /^(?:javascript|about|data|blob|mailto|tel):/i.test(raw)) continue;
+    const abs = absUrl(raw, base);
+    if (isFollowableUrl(abs)) cands.push(abs);
+  }
+  if (!cands.length) return null;
+  const bh = hostOf(base); // 跨站 iframe 多为广告 / 统计，同站的才是播放器
+  for (let i = 0; i < cands.length; i++) if (hostOf(cands[i]) === bh) return cands[i];
+  return cands[0];
+}
+function findPlayTarget(html, base) {
+  const f = findIframeSrc(html, base);
+  if (f) return f;
+  if (!html) return null;
+  const m = String(html).match(PLAYER_LINK_RE);
+  if (!m) return null;
+  const abs = absUrl(String(m[1]).replace(/\\\//g, "/"), base);
+  return isFollowableUrl(abs) ? abs : null;
+}
+// 有界跟随：抓播放页 → extractMaster；未命中则再深一层（仍受 iframeMaxFollow 限制）
+async function followIframe(ctx, rc, pageHtml, pageUrl, depth) {
+  const max = Math.max(1, Math.min(3, settingInt("iframeMaxFollow", 1)));
+  if (depth >= max) return null;
+  const target = findPlayTarget(pageHtml, pageUrl);
+  if (!target || target === pageUrl) return null; // 自指防环
+  if (rc && rc.fetches >= RESOLVE_FETCH_CAP) return null;
+  let r;
+  try {
+    r = await smartFetch(ctx, rc, target, pageUrl); // Referer = 嵌入页
+  } catch (e) {
+    flux.logger.warn("[m3u8-resolver] 跟随内嵌播放器失败:", String(e));
+    return null;
+  }
+  if (!r || r.status !== 200 || !r.body) return null;
+  const found = extractMaster(r.body, target);
+  if (found) return { m3u8: found, referer: target };
+  return await followIframe(ctx, rc, r.body, target, depth + 1);
+}
+// 统一的抓取入口：带请求头 + 计数闸；命中挑战则解 Cookie 并对同一 URL 重取一次（不循环）
+async function smartFetch(ctx, rc, url, referer) {
+  if (rc) {
+    if (rc.fetches >= RESOLVE_FETCH_CAP) throw new Error("resolve 抓取次数超上限 " + RESOLVE_FETCH_CAP);
+    rc.fetches++;
+  }
+  const r = await flux.fetch({ url: url, headers: fetchHeaders(ctx, referer, rc, url) });
+  if (!settingBool("solveChallenge", true)) return r;
+  if (!r || r.status !== 200 || !r.body) return r;
+  const sol = solveChallenge(r.body);
+  if (!sol) return r;
+  const host = hostOf(url);
+  if (!host) return r;
+  rc.cookies[host] = mergeCookie(rc.cookies[host], sol.cookie);
+  flux.logger.info("[m3u8-resolver] 命中防抓页校验，已解出 Cookie 并对同一地址重取");
+  if (rc.fetches >= RESOLVE_FETCH_CAP) throw new Error("resolve 抓取次数超上限 " + RESOLVE_FETCH_CAP);
+  rc.fetches++;
+  return await flux.fetch({ url: url, headers: fetchHeaders(ctx, referer, rc, url) });
+}
+
 // ================= 主流程 =================
 async function resolve(ctx) {
+  // 本次解析的内存上下文（防抓页 Cookie / 抓取计数），不落盘。二段也要用，故最先建。
+  const rc = newResolveCtx();
   // 二段（引擎按清单条目回调）：resolverItem 非空 → 只解析这一条，收敛为**单直链**。
   // 必须排在 inScope 之前 —— 二段的目标由插件自己产出，可能指向任意主机，
   // 不能再受 targetHosts 约束。
-  if (ctx && ctx.resolverItem) return await resolveSecondStage(ctx);
+  if (ctx && ctx.resolverItem) return await resolveSecondStage(ctx, rc);
 
   if (!inScope(ctx)) return null; // 不在作用域 → 放行，按原 URL 下载
 
@@ -292,12 +482,12 @@ async function resolve(ctx) {
     // 情况 A：直接给的就是 .m3u8（最常见，通用处理）
     playlistUrl = ctx.url;
     pageTitle = nameFromUrl(ctx.url); // 直链模式：URL 推导基础名（剔除 index 类，见 nameFromUrl）
-    const r = await flux.fetch({ url: ctx.url, headers: fetchHeaders(ctx, refererValue(ctx)) });
+    const r = await smartFetch(ctx, rc, ctx.url, refererValue(ctx));
     if (r.status !== 200) throw new Error("fetch playlist " + r.status);
     body = r.body;
   } else {
     // 情况 B：给的是播放页 → 抓页面，抠出 master.m3u8（按目标站结构定制）
-    const page = await flux.fetch({ url: ctx.url, headers: fetchHeaders(ctx, refererValue(ctx)) });
+    const page = await smartFetch(ctx, rc, ctx.url, refererValue(ctx));
     if (page.status !== 200) throw new Error("fetch page " + page.status);
     pageTitle = extractTitle(page.body); // 按网页标题命名
     if (!pageTitle) warnNoTitle(ctx);
@@ -316,14 +506,23 @@ async function resolve(ctx) {
       }
     }
 
-    const found = extractMaster(page.body, ctx.url);
+    let found = extractMaster(page.body, ctx.url);
+    let masterReferer = ctx.url; // 抓 master 时的 Referer
+    if (!found && settingBool("followIframe", true)) {
+      // 页面里没有字面 m3u8：播放器可能被放在内嵌框架里（maccms 常见）
+      const via = await followIframe(ctx, rc, page.body, ctx.url, 0);
+      if (via) {
+        found = via.m3u8;
+        masterReferer = via.referer;
+      }
+    }
     if (!found) {
       flux.logger.info("[m3u8-resolver] 页面未找到 m3u8，放行");
       return null; // 不归我管
     }
     playlistUrl = found;
     // 抓 master 时 Referer 用播放页本身，比 origin 更贴近浏览器行为
-    const r = await flux.fetch({ url: found, headers: fetchHeaders(ctx, ctx.url) });
+    const r = await smartFetch(ctx, rc, found, masterReferer);
     if (r.status !== 200) throw new Error("fetch master " + r.status);
     body = r.body;
   }
@@ -1035,7 +1234,7 @@ async function buildManifestResult(pageTitle, listing) {
 //   · 返回值里 url 与 variants/audioUrl 语义互斥，这里只走 finalize（单直链）；
 //   · 不传 fileName —— 子任务沿用清单条目名；
 //   · 画质/音轨设置照常生效，但**不再弹框**（N 个子任务弹 N 个框是不可接受的）。
-async function resolveSecondStage(ctx) {
+async function resolveSecondStage(ctx, rc) {
   const target = await decodeItem(ctx.resolverItem);
   if (!target) {
     flux.logger.warn("[m3u8-resolver] 二段：条目已失效（多为插件重装后令牌丢失），放行");
@@ -1046,19 +1245,28 @@ async function resolveSecondStage(ctx) {
   const playlistUrl = target;
   let body;
   if (isPlaylistUrl(target)) {
-    const r = await flux.fetch({ url: target, headers: fetchHeaders(ctx, refererValue(ctx)) });
+    const r = await smartFetch(ctx, rc, target, refererValue(ctx));
     if (r.status !== 200) throw new Error("fetch playlist " + r.status);
     body = r.body;
   } else {
     // 条目本身是剧集页：再抓一次页面，取其中第一个 m3u8
-    const page = await flux.fetch({ url: target, headers: fetchHeaders(ctx, refererValue(ctx)) });
+    const page = await smartFetch(ctx, rc, target, refererValue(ctx));
     if (page.status !== 200) throw new Error("fetch page " + page.status);
-    const found = extractMaster(page.body, target);
+    let found = extractMaster(page.body, target);
+    let masterReferer = target;
+    if (!found && settingBool("followIframe", true)) {
+      // 同上：播放器在内嵌框架里时跟进一层（二段同样只返回单直链）
+      const via = await followIframe(ctx, rc, page.body, target, 0);
+      if (via) {
+        found = via.m3u8;
+        masterReferer = via.referer;
+      }
+    }
     if (!found) {
       flux.logger.warn("[m3u8-resolver] 二段：条目页未找到 m3u8，放行");
       return null;
     }
-    const r = await flux.fetch({ url: found, headers: fetchHeaders(ctx, target) });
+    const r = await smartFetch(ctx, rc, found, masterReferer);
     if (r.status !== 200) throw new Error("fetch master " + r.status);
     body = r.body;
   }
