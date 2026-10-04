@@ -1,9 +1,9 @@
 {
   "identity": "m3u8-resolver@cocolight",
   "name": "M3U8 发现与变体解析器",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "minAppVersion": "0.4.8",
-  "description": "把播放页或 .m3u8 链接解析成可下载的 HLS 播放列表：自动选清晰度、补齐防盗链请求头，支持剧集批量、登录站点、订阅追更与反爬站处理。",
+  "description": "把播放页或 .m3u8 链接解析成可下载的 HLS 播放列表：自动选清晰度、补齐防盗链请求头，支持剧集批量、登录站点、订阅追更与反爬站处理；页面只提供 DASH 清单（.mpd）时也能自动发现并交给核心下载。",
   "homepage": "https://github.com/cocolight/fluxdown-plugin-m3u8",
   "permissions": ["ffmpeg", "ytdlp", "auth"],
   "resolvers": [
@@ -48,6 +48,13 @@
       "key": "followIframe",
       "title": "跟随页面内嵌播放器",
       "description": "页面里没有直接的 m3u8、而是把播放器放在内嵌框架（iframe）里时，自动跟进该框架再解析。跟不到则退回原有行为。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "detectDash",
+      "title": "识别页面里的 DASH 清单（.mpd）",
+      "description": "页面里没有 m3u8、但有 DASH 清单（.mpd）时，自动取出该地址交给核心的 DASH 引擎下载。关闭则只解析 HLS（.m3u8）。仅在找不到 m3u8 时兜底生效，页面同时提供两种格式时仍优先用 m3u8。",
       "type": "boolean",
       "default": "true"
     },

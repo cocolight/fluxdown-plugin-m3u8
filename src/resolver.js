@@ -428,6 +428,11 @@ async function followIframe(ctx, rc, pageHtml, pageUrl, depth) {
   if (!r || r.status !== 200 || !r.body) return null;
   const found = extractMaster(r.body, target);
   if (found) return { m3u8: found, referer: target };
+  // DASH 发现层（1.8.0）：内嵌播放页里没有 m3u8 但可能有 .mpd → 同一分支一并试
+  if (settingBool("detectDash", true)) {
+    const mpd = extractDash(r.body, target);
+    if (mpd) return { mpd: mpd, referer: target }; // 由调用方按 .mpd 直接返回（不读内容）
+  }
   return await followIframe(ctx, rc, r.body, target, depth + 1);
 }
 // 统一的抓取入口：带请求头 + 计数闸；命中挑战则解 Cookie 并对同一 URL 重取一次（不循环）
@@ -478,8 +483,13 @@ async function resolve(ctx) {
   let body = null;
   let pageTitle = null; // 改善默认命名（#568/#301）
 
-  if (isPlaylistUrl(ctx.url)) {
-    // 情况 A：直接给的就是 .m3u8（最常见，通用处理）
+  if (isManifestUrl(ctx.url)) {
+    // 情况 A：直接给的就是清单地址 —— .mpd 直链交给核心 DASH 引擎，插件不抓取；
+    //         .m3u8（最常见）照常抓取解析。
+    if (isDashUrl(ctx.url)) {
+      flux.logger.info("[m3u8-resolver] 直接收到 DASH 清单，交给核心 DASH 引擎:", ctx.url);
+      return await marked(ctx, await finalize(ctx, ctx.url, nameFor(null, ctx, null, null), null));
+    }
     playlistUrl = ctx.url;
     pageTitle = nameFromUrl(ctx.url); // 直链模式：URL 推导基础名（剔除 index 类，见 nameFromUrl）
     const r = await smartFetch(ctx, rc, ctx.url, refererValue(ctx));
@@ -508,15 +518,25 @@ async function resolve(ctx) {
 
     let found = extractMaster(page.body, ctx.url);
     let masterReferer = ctx.url; // 抓 master 时的 Referer
+    let viaMpd = null; // 内嵌播放页里发现的 .mpd（DASH 发现层）
     if (!found && settingBool("followIframe", true)) {
       // 页面里没有字面 m3u8：播放器可能被放在内嵌框架里（maccms 常见）
       const via = await followIframe(ctx, rc, page.body, ctx.url, 0);
       if (via) {
         found = via.m3u8;
+        viaMpd = via.mpd || null;
         masterReferer = via.referer;
       }
     }
+    // ---- DASH 发现层（1.8.0）：HLS 未命中时兜底找 .mpd ----
+    // 优先级固定：先 .m3u8（现行为），后 .mpd —— 页面同时含两者时不改变 HLS 结果。
+    // 命中则**直接返回该 .mpd 直链**，不抓取、不读内容、不走 isPlaylistBody 校验（.mpd 是 XML）。
     if (!found) {
+      const mpd = viaMpd || (settingBool("detectDash", true) ? extractDash(page.body, ctx.url) : null);
+      if (mpd) {
+        flux.logger.info("[m3u8-resolver] 页面未找到 m3u8，发现 DASH 清单，交给核心 DASH 引擎:", mpd);
+        return await marked(ctx, await finalize(ctx, mpd, nameFor(pageTitle, ctx, null, null), null));
+      }
       flux.logger.info("[m3u8-resolver] 页面未找到 m3u8，放行");
       return null; // 不归我管
     }
@@ -877,6 +897,34 @@ function extractMaster(html, base) {
     if (/^https?:\/\//i.test(abs)) return abs;
   }
   return null;
+}
+
+// ---- DASH 发现层（1.8.0）----
+// 与 extractMaster 并列的零依赖正则提取，抠出页面里的 .mpd 绝对地址。
+// ★ 只做「发现」：拿到 URL 就交给核心的 dash_downloader，插件**不读 .mpd 内容、不解析 MPD**。
+//   核心按 `.mpd` 扩展名路由到 DASH 引擎（native/engine/src/dash_downloader.rs），全包后续。
+// ★ 禁止 new URL（QuickJS 无 URL 全局对象）→ 一律 parseUrl / absUrl。
+// ★ fail-closed：抠不到 → 返回 null，行为与 1.7.0 逐字一致。
+function extractDash(html, base) {
+  if (!html) return null;
+  const norm = String(html).replace(/\\\//g, "/"); // JS/JSON 里的 \/ 转义
+  // ① 直接是绝对地址
+  let m = norm.match(/(https?:\/\/[^"'\\\s<>]+?\.mpd(?:\?[^"'\\\s<>]*)?)/i);
+  if (m) return m[1];
+  // ② 相对地址（/dash/manifest.mpd、dash/manifest.mpd?x=1）→ 用页面 URL 转绝对
+  m = norm.match(/["']([^"'<>\s]+?\.mpd(?:\?[^"'<>\s]*)?)["']/i);
+  if (m) {
+    const abs = absUrl(m[1], base);
+    if (/^https?:\/\//i.test(abs)) return abs;
+  }
+  return null;
+}
+// 内容形态判据（仅供日志：确认抠到的地址确实是 DASH 清单）。不做内容校验，
+// 因为插件不读 .mpd —— 是否合法由核心 DASH 引擎在下载阶段判定。
+function looksLikeMpdBody(body) {
+  if (!body) return false;
+  const head = String(body).slice(0, 2048);
+  return /<MPD[\s>]/i.test(head) || /application\/dash\+xml/i.test(head);
 }
 // 站点没有 <title> 的定向提示：这类站后续会被 FluxDown 核心按「无名」处理（默认 video）
 function warnNoTitle(ctx) {
@@ -1248,21 +1296,32 @@ async function resolveSecondStage(ctx, rc) {
     const r = await smartFetch(ctx, rc, target, refererValue(ctx));
     if (r.status !== 200) throw new Error("fetch playlist " + r.status);
     body = r.body;
+  } else if (isDashUrl(target)) {
+    // 条目本身就是 .mpd 直链（DASH 发现层的清单条目）→ 直接返回，不抓取、不解析
+    return await marked(ctx, await finalize(ctx, target, null, null));
   } else {
     // 条目本身是剧集页：再抓一次页面，取其中第一个 m3u8
     const page = await smartFetch(ctx, rc, target, refererValue(ctx));
     if (page.status !== 200) throw new Error("fetch page " + page.status);
     let found = extractMaster(page.body, target);
     let masterReferer = target;
+    let viaMpd = null;
     if (!found && settingBool("followIframe", true)) {
       // 同上：播放器在内嵌框架里时跟进一层（二段同样只返回单直链）
       const via = await followIframe(ctx, rc, page.body, target, 0);
       if (via) {
         found = via.m3u8;
+        viaMpd = via.mpd || null;
         masterReferer = via.referer;
       }
     }
     if (!found) {
+      // DASH 发现层（1.8.0）：条目页里没有 m3u8 但有 .mpd → 直接返回该直链
+      const mpd = viaMpd || (settingBool("detectDash", true) ? extractDash(page.body, target) : null);
+      if (mpd) {
+        flux.logger.info("[m3u8-resolver] 二段：条目页发现 DASH 清单，交给核心 DASH 引擎:", mpd);
+        return await marked(ctx, await finalize(ctx, mpd, null, null));
+      }
       flux.logger.warn("[m3u8-resolver] 二段：条目页未找到 m3u8，放行");
       return null;
     }
@@ -1316,6 +1375,18 @@ const RE_VIDEO_CODEC = /(avc1|avc3|hvc1|hev1|av01|vp09|vp9|vp08|vp8|dvh1|dvhe|mp
 
 function isPlaylistUrl(u) {
   return /\.m3u8(\?|$)/i.test(String(u || ""));
+}
+// DASH 清单（.mpd）直链判定（1.8.0）。与 isPlaylistUrl 并列但**语义不同**：
+//   · isPlaylistUrl 命中 → 情况 A 会去抓取并解析 #EXTM3U（HLS）；
+//   · isDashUrl 命中 → 直接返回该直链交给核心 DASH 引擎，插件**不抓取、不读内容**。
+// 因此两者在 resolve/resolveSecondStage 里走不同分支，不能合并。
+function isDashUrl(u) {
+  return /\.mpd(\?|$)/i.test(String(u || ""));
+}
+// 情况 A/B 的「是否直接给定清单地址」判定：HLS 直链或 DASH 直链都算。
+// ★ 用途仅限「是否走抓取 playlist 分支」这一处（DASH 命中会提前返回，抓取不到）。
+function isManifestUrl(u) {
+  return isPlaylistUrl(u) || isDashUrl(u);
 }
 // 合法 playlist 必须有 #EXTM3U
 function isPlaylistBody(body) {
@@ -1681,12 +1752,12 @@ function sanitize(s) {
     .trim()
     .slice(0, 200) || "download";
 }
-// 作用域：直接 .m3u8 一律处理；页面 URL 仅处理配置好的目标站
+// 作用域：直接清单地址（.m3u8 / .mpd）一律处理；页面 URL 仅处理配置好的目标站
 function inScope(ctx) {
   // 二段 / 订阅条目：地址是插件自己产出的精细目标，一律处理。
   // 少了这行，未配 targetHosts 时清单子任务会被放行成「原样下载」→ 下载到 HTML。
   if (ctx && ctx.resolverItem) return true;
-  if (isPlaylistUrl(ctx.url)) return true;
+  if (isManifestUrl(ctx.url)) return true;
   const raw = settingStr("targetHosts", "").trim();
   if (!raw) return false; // 未配置目标站 → 不处理页面
   const hosts = raw.split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
