@@ -15,12 +15,12 @@
 
 ### Added
 
-- 新增设置页签「去广告规则」（`main` + `contributes.views`）：模式切换、规则即时校验、五档预设
+- 新增设置页签「去广告规则」（`main.tsx` + `contributes.views`）：模式切换、规则即时校验、五档预设
 - 新增 `src/lib/rulecheck.ts`：界面侧规则校验，与拦截器共用 `parseAdRuleSet`，不另写一套判定
 - 新增 `src/lib/adpresets.ts`：从保守到激进的五档规则形态，不内置任何站点域名名单
-- 新增 `tests/ui.mjs`：36 项视图契约（树合法性、受控输入、保存语义、越界检查）
+- 新增 `tests/ui.mjs`：37 项视图契约（树合法性、受控输入、保存语义、越界、SDK 运行时例外边界）
 - `scripts/check-fast.sh` 新增第 6 条：manifest 声明的入口必须在构建配置里有映射
-- 新增 ADR-0004：视图层不用 SDK 的 `jsx-runtime`，改用引擎自带的 `flux.ui.h`
+- 新增 ADR-0005：视图用 SDK 的 `jsx-runtime`，AGPL 义务登记在 `THIRD-PARTY.md`；ADR-0004 随之被取代
 - 新增 `AGENTS.md`、`.agents/` 工程文档、`ROADMAP.md`、`CONTRIBUTING.md`、`THIRD-PARTY.md`
 - 新增 `scripts/check-fast.sh` 快速门禁与 `.githooks/pre-commit`，本地与 CI 共用同一份断言
 - 新增 `.github/pull_request_template.md`
@@ -36,6 +36,7 @@
 - `AGENTS.md` §9 同改矩阵的「设置键」一行改指 `manifest.json` + `settings.ts`，仓库配置单列一行
 - 使用者文档 `docs/configuration.md` 改名 `docs/settings.md`（理由：与 `.agents/configuration.md` 同名，跨目录引用会指错）
 - `.agents/sdk-migration.md` 更正 M5 说明：`settings` 视图是**新增**页签，不替换「基础设置」页签
+- `THIRD-PARTY.md` 新增「随产物分发的 AGPL 组件」一节，登记 `dist/main.js` 内联的 jsx-runtime 及义务边界
 
 ### Fixed
 

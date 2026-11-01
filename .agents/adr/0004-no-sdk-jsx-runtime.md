@@ -1,6 +1,9 @@
 # 视图层不用 SDK 的 JSX 运行时
 
-- 状态：已接受
+> **本记录已被 [0005](0005-allow-sdk-jsx-runtime.md) 取代。** 以下是当时的判断与理由，保留作历史依据；
+> 现行做法是"用 SDK 的 `ui/jsx-runtime`，义务登记在 `THIRD-PARTY.md`"。
+
+- 状态：已被 [0005](0005-allow-sdk-jsx-runtime.md) 取代
 - 日期：2026-11-01
 - 决策者：fluxdown-plugin-m3u8 维护者
 

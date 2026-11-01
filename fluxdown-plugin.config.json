@@ -5,6 +5,6 @@
     "auth.js": "src/entry/auth.ts",
     "subscribe.js": "src/entry/subscribe.ts",
     "intercept.js": "src/entry/intercept.ts",
-    "main.js": "src/entry/main.ts"
+    "main.js": "src/entry/main.tsx"
   }
 }

@@ -158,7 +158,7 @@
 │   │   ├── auth.ts                  # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
 │   │   ├── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
 │   │   ├── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
-│   │   └── main.ts                  # 常驻脚本：注册设置页签「去广告规则」视图（contributes.views）
+│   │   └── main.tsx                 # 常驻脚本：注册设置页签「去广告规则」视图（contributes.views，JSX）
 │   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
 │   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts adrules.ts probe.ts ...
 │   │   ├── rulecheck.ts             # 设置页的规则校验（与 adrules 同源，不另写判定）
@@ -208,7 +208,7 @@ npm run pack        # 打包 .fxplug
 - `tests/legacy/` 是冻结的基线，**不要修改**。有意改变行为的场景在 `tests/parity/scenarios.mjs` 里加 `diverges: "理由"`
   声明，比对器把它算作已知差异并打印首个不同点；一旦声明过而实际不再有差异，比对器会报「豁免过期」。
 - **有意改变的行为要进 `contract` 而不是改 parity**：parity 比的是「与 v1.8.0 等价」，contract 断言的是「现在应该是什么样」。凭据作用域从「全部主机」收窄到「登记 origin」就属于后者 —— parity 里比的是最终生效值，作用域差异由 contract 单独断言。
-- 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT）：产物里不含 SDK 运行时，授权链保持干净。
+- 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT）。唯一例外是 `main.tsx` 的 JSX 运行时，它会被内联进 `dist/main.js` 随插件分发 —— 义务与边界写在 [THIRD-PARTY.md](THIRD-PARTY.md)，决策见 [ADR-0005](.agents/adr/0005-allow-sdk-jsx-runtime.md)。
 
 ## 开发约定
 
@@ -216,7 +216,7 @@ npm run pack        # 打包 .fxplug
 - 提交与本地检查：见 [CONTRIBUTING.md](CONTRIBUTING.md)；AI 编码助手的规则与红线见 [AGENTS.md](AGENTS.md)。
 - 功能状态与验收标准：见 [ROADMAP.md](ROADMAP.md)；改动记进 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]`。
 - 文档分层：使用者文档放 `docs/`，工程文档放 `.agents/` —— 判据只有一条「不读它 AI 会做错事吗」。
-- 第三方依赖的许可证登记在 [THIRD-PARTY.md](THIRD-PARTY.md)；SDK 只以 `import type` 引用（AGPL 与 MIT 的隔离，见 ADR-0003）。
+- 第三方依赖的许可证登记在 [THIRD-PARTY.md](THIRD-PARTY.md)；SDK 的类型只以 `import type` 引用，唯一的运行时代码是视图的 JSX 运行时（见 ADR-0005）。
 
 ## 许可证
 

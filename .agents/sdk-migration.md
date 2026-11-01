@@ -362,8 +362,12 @@ async function resolve(ctx: ResolveContext): Promise<ResolveResult | null> { /* 
 globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物零 SDK 代码
 ```
 
+> M5 起有**一处例外**：`main.tsx` 的 JSX 运行时（`sdk/ui/jsx-runtime`）随 `dist/main.js` 分发，
+> 授权义务登记在 `../THIRD-PARTY.md`，决策见 ADR-0005。上面这条对其余五个入口（resolver / hooks /
+> auth / subscribe / intercept）仍然成立 —— 例外不得扩大。
+
 代价：失去 `defineHooks` / `defineInterceptors` 的阶段分发糖（自己写 `switch (ctx.stage)` 即可）。
-收益：`dist/` 里除自己的代码与 esbuild 运行时代之外无第三方内容，MIT 授权链干净。
+收益：`dist/` 里除自己的代码、esbuild 运行时代与 `main.js` 的 JSX 运行时之外无第三方内容。
 已发布的 `youtube-down` 示例插件用的是 SDK 辅助函数 —— 值得看一眼它的 `license` 字段怎么写的，作为对照。
 
 ### 7.4 其它风险
@@ -392,7 +396,7 @@ M5 说明：`location: "settings"` **至多一个**视图，它是在自动生�
 《可移植界面》指南第 7 节写得更明确：「`settings` 视图会在它旁边增加一个插件设置页签」。本文件
 早期版本误记为「替换」，据此做的「必须在视图里重做 27 个设置项」判断不成立，已删除。
 `desktop` 入口会拉高到**完全风险**等级并需要 `desktop` 权限 —— **不要**为了界面顺手引入，
-可移植视图（`main` + `flux.ui.h`）已经够用，且 Web 端同样渲染。
+可移植视图（`main` + JSX）已经够用，且 Web 端同样渲染。
 
 ### 8.1 M1 落地结果（2026-11-01）
 
@@ -421,7 +425,7 @@ dist/（不入库）                                .github/workflows/ci.yml
 | `npm run validate` | `valid (risk: elevated)` —— elevated 来自既有 `auth` / `ffmpeg` 权限，非新增 |
 | `npm run parity` | **67/67 场景一致** |
 | 变异自检 | 故意改坏一处字符串 → 15 个场景报差异，确认比对器不会"假绿" |
-| 产物许可证洁净度 | `dist/*.js` 中 SDK 运行时命中数为 **0**（全程只用 `import type`） |
+| 产物许可证洁净度 | `dist/*.js` 中 SDK 运行时命中数为 **0**（全程只用 `import type`）；**M5 起 `main.js` 例外**，见 8.6 与 ADR-0005 |
 
 开发工作流因此变更（对使用者是 breaking）：**「从目录安装」自本版起指向 `dist/`**，`src/` 不再含 `manifest.json`。
 `.fxplug` 发布包内容不变，故已装用户无感。
@@ -591,11 +595,10 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
 所以视图是**增量**的。这直接决定了 M5 的体量：只做基础表单做不了的事（即时校验、预设），
 不必复刻 27 个字段。
 
-**技术选择**：不用 JSX，用 `flux.ui.h`。SDK 的 `ui/jsx-runtime` 是运行时代码，esbuild 会把它内联
-进 `dist/main.js`，与 ADR-0003 冲突；自研一份等价 runtime 又属于照上游复刻，授权边界不清。
-`flux.ui.h` 是引擎注入的宿主 API，只调用不复刻。代价是写作啰嗦，用本地 `type H` 把
-`ViewIntrinsicElements` 的 kind→props 关联补回来，写错标签或把 `text` 传成数字仍是编译错误。
-决策与备选见 `.agents/adr/0004-no-sdk-jsx-runtime.md`。
+**技术选择**：JSX 编译到 SDK 的 `ui/jsx-runtime`，由 esbuild 内联进 `dist/main.js`，随产物分发。
+最初这里选的是 `flux.ui.h`（避开 AGPL），落地后维护者判定不划算 —— 可读性代价是**长期**的，
+授权义务是**可登记**的，于是改为 JSX 并把义务写进 `../THIRD-PARTY.md`。ADR-0005 记录这次反转，
+ADR-0004 保留原判断作历史依据。要点：`dist/main.js` 从 15.6 KB 增至 17.2 KB，其余五个入口仍零 SDK 运行时。
 
 **校验分三层**（`src/lib/rulecheck.ts`，与拦截器共用 `parseAdRuleSet`）：
 
@@ -610,15 +613,16 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
 **预设立场**：不内置任何站点域名或广告分片名单。广告域名逐站长出来，写死一份没人维护的表比没有更糟。
 五档给的是**规则形态**（关闭 → 仅标记 → 标记+命名 → 加目录过滤 → 白名单保护），越靠后丢得越多。
 
-**验收**：`tests/ui.mjs` 36 项。分五组 —— 声明与注册一致（manifest 声明的视图必须都注册了，且不多注册）、
+**验收**：`tests/ui.mjs` 37 项。分六组 —— 声明与注册一致（manifest 声明的视图必须都注册了，且不多注册）、
 渲染树合法性（26 种 kind 白名单、文本属性必须是字符串、同级 key 唯一、节点数与深度在引擎限内）、
 校验三层的分档、交互（受控输入写回 state、按钮在未保存时才可用、还原、未知 key 不崩）、
 保存语义（只写两个键、值都是字符串、失败不改 `saved*`、错误原文透传）、越界检查（不发请求、
-不读 storage、不注册命令/事件）。
+不读 storage、不注册命令/事件）、**SDK 运行时例外边界**（`#fragment` 标记只在 `main.js`，
+其他五个产物一处都不许有 —— 有人给别的入口写 JSX，AGPL 面积就扩大了）。
 
-**变异自检**（四处，都确认会让断言变红）：去掉 `persist` 里的 blocked 判断 → 1 项失败；
+**变异自检**（五处，都确认会让断言变红）：去掉 `persist` 里的 blocked 判断 → 1 项失败；
 `change` 事件不写回 state → 2 项失败；还原按钮 key 改成 `save`（同级重名）→ 3 项失败；
-heading 的 `text` 传数字 → 2 项失败。
+heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment` → 例外边界那条失败。
 
 **门禁新增第 6 条**：manifest 声明的每个入口都必须在 `fluxdown-plugin.config.json` 里有构建映射。
 加 `main` 入口时最容易忘这件事，后果不是警告而是「装不上」（客户端要求 manifest 点名的文件都在包里）。
