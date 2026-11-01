@@ -21,7 +21,7 @@
 - **相对地址修正（v1.4.1）**：插件沙箱是 QuickJS，**没有 `URL` 全局对象**；改用自实现的纯字符串解析（`parseUrl`/`absUrl`），并在返回前用 `assertOutputUrl` 兜底校验，出错时给可读提示而非引擎的隐晦报错。
 - **智能命名（v1.4.0）**：文件名按「页面标题 → 上层 ID 目录 → 文件名」决策链推导，**剔除 `index`/`playlist`/`master` 这类无信息量的基础名**；默认模板 `{title} {host}`，可自定义。
 - **分片级去广告（v2.1.0）**：下载前按播放列表里的广告标记丢弃广告分片（`interceptors.segments` 阶段），**默认关闭**。两档强度：只认 `CUE-OUT`/`CUE-IN` 与 `DATERANGE` 标注（保守），或叠加「极短分片 / 广告命名」推测（激进）。三条纪律内置：标记必须成对、不跨密钥与初始化段边界、不丢空也不丢超过八成。只对本插件解析出来的任务生效。
-- **去广告规则编辑页（v2.3.0）**：插件设置里多一个「去广告规则」页签（在「基础设置」旁边，不取代它）。里面能切模式、套用五档预设、手改自定义规则 JSON，并**当场**告诉你哪条规则写错了、哪条不会生效 —— 不必等到下次下载翻日志。
+- **去广告自定义规则（v2.3.0）**：模式之外可写站点级白名单 / 黑名单（JSON：`keepPath` / `dropPath` / `dropHosts`），覆盖内置判定。格式示例见 `docs/settings.md`。
 - **下载后处理（可选，默认开）**：核心 remux 失败、或产物来自非 HLS 任务时用 ffmpeg 无损补转一次；核心未合并轨对时用 `-c copy` 补做合并。v2.2.0 起先用 ffprobe 读**真实容器**再决定转不转（扩展名会骗人：fMP4 合并出来常叫 `.ts`，容器其实已是 MP4），并把转出的产物**登记为任务的衍生产物** —— 删任务时一并删除，不再留孤儿文件。
 - **小 Range 兼容（v2.2.0）**：对「单次请求超过几 MB 就 403」的网盘 CDN，可给下载请求设 Range 上限，在不牺牲多线程的前提下拿到文件（`maxRangeBytes`，需 FluxDown ≥ 0.6.0，默认不启用）。
 - **失败可观测**：`onError` 记录本插件任务的失败原因。
@@ -91,7 +91,7 @@
 4. 请求面以 `request` 补丁返回（v2.0.0）：`referrer`（优先播放页 URL）、`userAgent`、`setHeaders`（`Origin` + 自定义头）；若该站点存有登录凭据且**下载目标与其同源**，另附 `originHeaders`（`Cookie`/`Authorization` 等，只对该 origin 的请求生效）。同时标记 `rangeSupported` 以启用多线程分段。
 5. 下载完成后 `src/entry/hooks.ts` 的 `onDone`：先用 ffprobe 读真实容器（v2.2.0），已是 MP4 家族或无视频轨就不动；否则核心合并失败时用 ffmpeg 补合并、开启 remux 时无损转封装为 `.mp4`。写出的产物随即登记为任务的衍生产物（`flux.task.recordArtifact`），删任务时一并删除。
 6. `onError` / `onCancel` 记录失败原因、清理任务标记。**钩子只对本插件经手的任务生效** —— resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/lib/handled.ts` 文件头）。
-7. 另有两个独立入口与一个常驻入口：`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举；`src/entry/intercept.ts` 的 `intercept(ctx)` 在 `segments` 阶段决定要不要丢弃广告分片（v2.1.0，默认关）；`src/entry/main.tsx` 被求值一次，注册设置页签。它们构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
+7. 另有两个独立入口：`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举；`src/entry/intercept.ts` 的 `intercept(ctx)` 在 `segments` 阶段决定要不要丢弃广告分片（v2.1.0，默认关）。四个入口构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
 
 ## 安全与隐私
 
@@ -130,7 +130,7 @@
 
 ```text
 .                                    # 仓库根（构建工程，非插件本体）
-├── manifest.json                    # 插件清单源文件（identity、权限、设置、入口与视图声明）
+├── manifest.json                    # 插件清单源文件（identity、权限、设置、入口声明）
 ├── fluxdown-plugin.config.json      # 构建配置：TS 入口 → 产物文件名映射
 ├── package.json / tsconfig.json     # 构建、测试与类型检查配置
 ├── AGENTS.md                        # AI 编码助手规则：路由表、常用命令、红线、DoD、事实源坐标
@@ -152,17 +152,14 @@
 ├── scripts/check-fast.sh            # 快速门禁：本地 pre-commit 与 CI 共用同一份断言
 ├── .githooks/pre-commit             # 提交前门禁（需 git config core.hooksPath .githooks）
 ├── src/                             # 源码（TypeScript，构建后打包进 dist/）
-│   ├── entry/                       # 五个入口：四个无状态（每次调用全新上下文）+ main（常驻）
+│   ├── entry/                       # 四个入口（每次调用全新上下文）
 │   │   ├── resolver.ts              # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
 │   │   ├── hooks.ts                 # 钩子：onDone（容器探测 → 轨对合并兜底 / remux → 登记产物）、onError、onCancel（清标记）
 │   │   ├── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
-│   │   ├── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
-│   │   └── main.tsx                 # 常驻脚本：注册设置页签「去广告规则」视图（contributes.views，JSX）
+│   │   └── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
 │   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
 │   │   ├── credential.ts            # 登录凭据文本 → 请求头（bearer / basic / 多行头 / Cookie）
 │   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts adrules.ts probe.ts ...
-│   │   ├── rulecheck.ts             # 设置页的规则校验（与 adrules 同源，不另写判定）
-│   │   ├── adpresets.ts             # 设置页的五档规则预设（不内置站点名单）
 │   └── types.ts                     # 内部共享类型
 ├── tests/                           # 五层测试，共用 tests/parity/harness.mjs 的假宿主
 │   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（冻结，不参与构建）
@@ -173,7 +170,7 @@
 │   ├── contract.mjs                 # 请求面契约：凭据只走 originHeaders、Basic 编码、rangeCap 区间
 │   ├── intercept.mjs                # 拦截器契约：成对丢弃、密钥边界、不丢空、归属判定
 │   ├── postprocess.mjs              # 后处理契约：产物登记、容器探测、探测失败必须回退
-│   └── ui.mjs                       # 视图契约：树合法性、受控输入、保存语义、越界检查
+│   └── ui.mjs                       # 设置表单契约：开关成组、主题前缀、默认值锁定、产物形态
 ├── dist/                            # ← 构建产物 = 插件本体（「从目录安装」指向此目录；不入库）
 ├── docs/settings.md                 # 使用者文档：27 个设置项的作用 / 配置 / 效果 / 示例
 ├── .github/workflows/build.yml      # CI：门禁 + 类型检查 + 构建 + 校验 + 五层测试 + CHANGELOG/发版守卫
@@ -182,7 +179,7 @@
 ```
 
 > **插件本体是构建产物 `dist/` 目录。** `manifest.json` 位于仓库根，构建时原样拷入 `dist/`；
-> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `subscribe.js` / `intercept.js` / `main.js`）。
+> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `subscribe.js` / `intercept.js`）。
 > 构建后这些脚本仍是**彼此独立的上下文**，运行时不能互相引用；
 > 源码侧可以正常 `import`，共享逻辑由构建期打包进各入口（代价是同一模块会在多个产物里各存一份）。
 
@@ -198,7 +195,7 @@ npm run parity      # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场�
 npm run contract    # 请求面契约：凭据只走 originHeaders、Basic 的 UTF-8 编码、凭据不落库
 npm run intercept   # 拦截器契约：成对丢弃、不跨密钥边界、不丢空、只碰本插件任务
 npm run postprocess # 后处理契约：产物登记、ffprobe 判容器、探测失败退回扩展名判断
-npm run ui          # 视图契约：设置页签的树合法性、受控输入、保存语义、越界检查
+npm run ui          # 设置表单契约：开关成组、主题前缀、默认值与 settings.ts 对账、产物形态
 npm run pack        # 打包 .fxplug
 ./scripts/check-fast.sh  # 结构门禁：文档路由表、AGENTS 行数、CHANGELOG 条目、版本号一致、入口构建映射、空白与冲突标记
 ```
@@ -207,7 +204,7 @@ npm run pack        # 打包 .fxplug
 - `tests/legacy/` 是冻结的基线，**不要修改**。有意改变行为的场景在 `tests/parity/scenarios.mjs` 里加 `diverges: "理由"`
   声明，比对器把它算作已知差异并打印首个不同点；一旦声明过而实际不再有差异，比对器会报「豁免过期」。
 - **有意改变的行为要进 `contract` 而不是改 parity**：parity 比的是「与 v1.8.0 等价」，contract 断言的是「现在应该是什么样」。凭据作用域从「全部主机」收窄到「登记 origin」就属于后者 —— parity 里比的是最终生效值，作用域差异由 contract 单独断言。
-- 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT）。唯一例外是 `main.tsx` 的 JSX 运行时，它会被内联进 `dist/main.js` 随插件分发 —— 义务与边界写在 [THIRD-PARTY.md](THIRD-PARTY.md)，决策见 [ADR-0005](.agents/adr/0005-allow-sdk-jsx-runtime.md)。
+- 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT），产物零 SDK 运行时（历史例外已随视图删除解除，见 [ADR-0009](.agents/adr/0009-settings-host-form-only.md)）。
 
 ## 开发约定
 
@@ -215,7 +212,7 @@ npm run pack        # 打包 .fxplug
 - 提交与本地检查：见 [CONTRIBUTING.md](CONTRIBUTING.md)；AI 编码助手的规则与红线见 [AGENTS.md](AGENTS.md)。
 - 功能状态与验收标准：见 [ROADMAP.md](ROADMAP.md)；改动记进 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]`。
 - 文档分层：使用者文档放 `docs/`，工程文档放 `.agents/` —— 判据只有一条「不读它 AI 会做错事吗」。
-- 第三方依赖的许可证登记在 [THIRD-PARTY.md](THIRD-PARTY.md)；SDK 的类型只以 `import type` 引用，唯一的运行时代码是视图的 JSX 运行时（见 ADR-0005）。
+- 第三方依赖的许可证登记在 [THIRD-PARTY.md](THIRD-PARTY.md)；SDK 的类型只以 `import type` 引用，产物零 SDK 运行时（见 ADR-0009）。
 
 ## 许可证
 

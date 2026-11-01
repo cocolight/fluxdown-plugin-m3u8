@@ -7,9 +7,9 @@
 
 | 路径 | 内容 |
 |------|------|
-| `manifest.json` | 插件清单源文件：`identity`、权限、设置项、入口与视图的声明。构建时原样拷入 `dist/` |
+| `manifest.json` | 插件清单源文件：`identity`、权限、设置项与入口的声明。构建时原样拷入 `dist/` |
 | `fluxdown-plugin.config.json` | 入口映射：`dist/*.js` → `src/entry/*.ts` |
-| `src/entry/` | 六个入口：五个无状态入口各对应一次性的 QuickJS 上下文，`main.tsx` 对应一个常驻上下文 |
+| `src/entry/` | 四个入口：各对应一次性的 QuickJS 上下文 |
 | `src/lib/` | 入口共享的纯函数模块，构建期打包进各入口 |
 | `src/types.ts` | 内部共享类型，补 SDK 未声明的宿主字段 |
 | `tests/legacy/` | v1.8.0 的四个 `.js` 原文件，冻结基线，不参与构建 |
@@ -19,15 +19,13 @@
 | `.agents/` | 工程协作文档，AI 与人共读 |
 | `scripts/` | 辅助脚本，含 `check-fast.sh` 快速门禁 |
 
-入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）、`main.tsx`（常驻：注册设置页签「插件设置」，三个页签 —— 基础/参数/去广告，JSX 渲染）。
-
-`main.tsx` 与其余四个不同类：它被引擎**求值一次**，注册发生在求值过程中，因此可以在文件顶层取用全局 `flux`；其余四个每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
+入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）。四个入口每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
 
 ## 2. 分层与依赖方向
 
 - 依赖方向单向：`src/entry/*` → `src/lib/*` → 无。`lib` 之间允许互相引用，但**不得成环**。
 - `lib` 内部分两类：纯函数（`url` / `hls` / `adrules` / `naming` / `text` / `patterns` / `probe` 的解析部分）与宿主调用（`http` / `request` / `install` / `handled` / `items`）。纯函数不得直接调 `flux.*`，宿主调用才碰。
-- **运行时六个入口彼此独立**：各自编译成一个 `.js`，同一模块会在多个产物里各存一份。`main.tsx` 用到的 `adrules` / `rulecheck` / `adpresets` 与拦截器产物各存一份，另额外内联 SDK 的 JSX 运行时（约 1.6 KB，授权见 `../THIRD-PARTY.md`）；靠 tree-shaking 保证只带进真正用到的部分。源码侧正常 `import` 即可，不要为「省体积」写跨入口的运行时依赖 —— 那在 QuickJS 里不存在。
+- **运行时四个入口彼此独立**：各自编译成一个 `.js`，同一模块会在多个产物里各存一份（`adrules` 就在 resolver 与 intercept 产物里各有一份）；靠 tree-shaking 保证只带进真正用到的部分。源码侧正常 `import` 即可，不要为「省体积」写跨入口的运行时依赖 —— 那在 QuickJS 里不存在。
 - 沙箱没有 `DOM`、`URL`、`setTimeout`、`fetch`。`tsconfig.json` 的 `lib` 不含 `DOM` 是**门禁**而非习惯：`new URL` / `btoa` 在编译期即失败，网络请求只走 `flux.fetch`。
 
 ## 3. 错误处理
@@ -47,7 +45,7 @@
 
 - 运行时零 npm 依赖：产物是 QuickJS 脚本，没有 `node_modules` 解析。新增能力优先手写或走宿主 API。
 - 构建期依赖（`typescript`、`fluxdown-plugin-sdk`）登记在 `package.json` 的 `devDependencies`，并在 `../THIRD-PARTY.md` 登记许可证。
-- **SDK 运行时只允许一处**：`main.tsx` 的 JSX 运行时（`sdk/ui/jsx-runtime`）随 `dist/main.js` 分发，AGPL 义务登记在 `../THIRD-PARTY.md`，见 ADR-0005。其余 SDK 导出——类型与 `defineMain` 之类的辅助——一律 `import type` 或不用，不得扩大这处例外。
+- **产物零 SDK 运行时**：SDK 导出一律 `import type`，不得引入 `sdk/ui/jsx-runtime`、`defineMain` 等任何运行时导出（历史例外已随视图删除解除，见 ADR-0009）。
 
 ## 6. 密钥管理
 
@@ -63,10 +61,9 @@
 | contract | `npm run contract` | 请求面**现在应该是什么样**（凭据作用域、Basic 编码、Range 换算） |
 | intercept | `npm run intercept` | 拦截器契约（成对性、密钥边界、不丢空、归属判定、规则解析） |
 | postprocess | `npm run postprocess` | 后处理契约（登记时机与名字、探测回退、容器家族、封面图） |
-| ui | `npm run ui` | 设置页签的视图契约（声明与注册一致、渲染树符合引擎 schema、受控输入、保存语义） |
+| ui | `npm run ui` | 设置表单契约（声明结构：开关成组、主题前缀、默认值锁定、select 选项、产物形态） |
 
 - 五层共用 `tests/parity/harness.mjs` 的假宿主。新增断言先想清楚它属于「等价」还是「契约」，**不要靠改基线抹平差异**。
-- `ui` 层与其他四层有一处结构差异：`main` 是常驻脚本，注册发生在脚本求值时，交互发生在加载之后。所以它读 `runEntry` 返回的 `liveCalls`（持续增长的引用），而不是 `calls`（加载那一刻的深拷贝快照）—— 用快照断言交互期行为会得到假绿。
 - 变异自检：新增或修改断言后，故意破坏对应实现，确认断言会红。没红过的断言等于没写。
 
 ## 8. 腐化信号与重构触发

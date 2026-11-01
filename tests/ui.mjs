@@ -1,218 +1,71 @@
 /**
- * 视图契约测试 —— 设置页签「插件设置」（`.agents/adr/0005` 起用 JSX 渲染）。
+ * 设置表单契约 —— 「设置 → 扩展 → 插件」里宿主自动生成的那张表单。
  *
- * 为什么单独一层：视图是**新增入口**（v1.8.0 与 M1–M4 都没有 `main` 脚本），没有「等价」可比；
- * 而它出错的方式又与下载无关 —— 树不合 schema、key 重名、受控输入没写回 state，任何一条
- * 都会让用户看到错误条或点了没反应，却不会体现在下载结果里。这里直接断言「现在应该是什么样」：
+ * 为什么单独一层：表单由宿主从 `manifest.settings` 渲染（SDK 的标准设置路径），
+ * 插件侧能动的只有声明本身。声明一旦散掉 —— 开关被参数打断、标题不带主题、
+ * 默认值漂移 —— 用户看到的就是一堵无从下手的墙，而下载行为测试全绿。这里直接
+ * 断言「声明现在应该是什么样」：
  *
- *   1. manifest 声明的视图，`main` 必须真的注册了（少一个，客户端打开就是 `view not registered`）。
- *   2. 渲染树符合引擎 schema：根是节点、子节点只能是节点、kind 在允许集合内、
- *      文本类属性必须是字符串、节点数与深度在限内、**同级 key 不重复**。
- *   3. 规则校验与拦截器同源：语法错拦住保存；非法正则/未知键只警告；`off` 模式下不拦。
- *   4. 保存只写**改动过的**键、值都是字符串；失败不改已保存快照，错误原文透传。
- *   5. `main` 不做越界的事：不 fetch、不读 storage、不注册命令/事件。
+ *   1. 开关连续排最前：宿主把**连续的开关字段合并进同一张卡片**（`plugin_settings.rs`
+ *      的 option_group 归并），这是这张表单唯一的分组手段。
+ *   2. 非开关项标题带「主题 · 项目」前缀、同主题连续、去广告殿后。
+ *   3. 默认值锁定在推荐值（方案A）；manifest 与 `settings.ts` 的读取兜底一致。
+ *   4. select 选项与运行时口径一致；widget×type 矩阵合法；每项都有描述。
+ *   5. 产物形态：4 入口、无 main.js、零 SDK 运行时（AGENTS.md 红线 #3）。
  *
  * 用法：npm run ui          （需先 npm run build）
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runEntry, show } from "./parity/harness.mjs";
+import { show } from "./parity/harness.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const DIST = process.env.UI_DIST || join(ROOT, "dist");
 
-const VIEW_ID = "ad-rules";
+const MANIFEST = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
+const FIELDS = MANIFEST.settings;
 
-/** 引擎允许的 26 种节点（`ViewKind`）。写错的标签在运行时是「未知节点」，这里提前拦下。 */
-const KINDS = new Set([
-  "stack", "scroll", "card", "section", "divider", "text", "heading", "markdown", "code",
-  "link", "image", "badge", "progress", "spinner", "kv", "callout", "empty", "button",
-  "switch", "checkbox", "select", "input", "textarea", "tabs", "table", "list",
-]);
+/** 开关段：连续排最前的 11 个 boolean，宿主把它们并成一张卡片。顺序即卡片内顺序。 */
+const TOGGLE_KEYS = [
+  "solveChallenge", "followIframe", "detectDash", "detectSeries", "htmlFallbackYtdlp",
+  "autoPick", "useYtdlp", "audioOnly", "remuxToMp4", "fixMuxFallback", "ephemeral",
+];
 
-/** 这些节点的这些属性直接进渲染，传数字会被引擎拒绝（「要求字符串的属性必须传字符串」）。 */
-const STRING_PROPS = {
-  text: ["text"],
-  heading: ["text"],
-  markdown: ["text"],
-  code: ["text"],
-  link: ["text", "href"],
-  badge: ["text"],
-  callout: ["text", "title"],
-  empty: ["title", "description"],
-  button: ["text"],
-  section: ["title", "description"],
-  card: ["title"],
-  image: ["src"],
+/** 非开关段的主题序列（同主题连续，去广告殿后）。 */
+const THEMES = ["画质", "音轨", "命名", "站点", "网络", "解析", "剧集", "下载", "去广告"];
+
+/** 推荐默认值（方案A）。有意改默认值时必须同步这张表，否则这里红。 */
+const DEFAULTS = {
+  solveChallenge: "true", followIframe: "true", detectDash: "true", detectSeries: "true",
+  htmlFallbackYtdlp: "true", autoPick: "false", useYtdlp: "false", audioOnly: "false",
+  remuxToMp4: "true", fixMuxFallback: "true", ephemeral: "false",
+  preferResolution: "best", preferCodec: "auto", separateAudio: "auto", audioLang: "",
+  nameTemplate: "{title} {host}", targetHosts: "", authCookie: "", userAgent: "",
+  extraHeadersRaw: "", iframeMaxFollow: "1", manifestMinItems: "3", manifestMaxItems: "200",
+  episodeLinkPattern: "", rangeCapKb: "0", adRulesMode: "off", adRulesExtra: "",
 };
 
-const MAX_NODES = 5000;
-const MAX_DEPTH = 64;
+/** select 的取值集合 = 运行时口径（`src/lib/adrules.ts` 的 AdMode、变体选择与音轨分离）。 */
+const OPTION_SETS = {
+  preferResolution: ["best", "1080", "720", "480", "360"],
+  preferCodec: ["auto", "avc", "hevc", "av01", "vp9"],
+  separateAudio: ["auto", "on", "off"],
+  adRulesMode: ["off", "marker", "heuristic"],
+};
 
-/**
- * 按引擎规则检查一棵树，返回问题清单（空数组 = 合法）。
- * 断言强度刻意贴近 daemon 的校验，而不是「看起来对就行」。
- */
-function checkTree(root) {
-  const problems = [];
-  let count = 0;
+/** widget×type 矩阵（引擎 manifest.rs 的 SettingWidget 允许表）。 */
+const WIDGET_MATRIX = {
+  string: ["text", "password", "textarea", "select", "folder"],
+  number: ["number"],
+  boolean: ["toggle"],
+};
 
-  const isNode = (n) =>
-    n && typeof n === "object" && !Array.isArray(n) && typeof n.k === "string" && n.p && typeof n.p === "object" && Array.isArray(n.c);
-
-  const walk = (node, path, depth) => {
-    if (depth > MAX_DEPTH) {
-      problems.push(`${path} 嵌套深度超过 ${MAX_DEPTH}`);
-      return;
-    }
-    if (!isNode(node)) {
-      problems.push(`${path} 不是节点（得到 ${show(node)}）`);
-      return;
-    }
-    count++;
-    if (!KINDS.has(node.k)) problems.push(`${path} 的 kind '${node.k}' 不在允许集合内`);
-
-    for (const prop of STRING_PROPS[node.k] || []) {
-      if (node.p[prop] !== undefined && typeof node.p[prop] !== "string") {
-        problems.push(`${path} 的 ${prop} 必须是字符串，实际 ${typeof node.p[prop]}（${show(node.p[prop])}）`);
-      }
-    }
-
-    // 同级 key 必须唯一，且任何会触发事件的节点都要有 key。
-    const seen = new Set();
-    for (const c of node.c) {
-      if (!isNode(c)) {
-        problems.push(`${path} 的子节点里有非节点值：${show(c)}`);
-        continue;
-      }
-      const k = c.p && c.p.key;
-      if (k !== undefined) {
-        if (seen.has(k)) problems.push(`${path} 下 key '${k}' 重复`);
-        seen.add(k);
-      }
-    }
-
-    node.c.forEach((c, i) => {
-      if (!isNode(c)) return;
-      const k = c.p && c.p.key !== undefined ? c.p.key : i;
-      walk(c, `${path}/${k}`, depth + 1);
-    });
-  };
-
-  walk(root, "root", 0);
-  if (count > MAX_NODES) problems.push(`节点数 ${count} 超过上限 ${MAX_NODES}`);
-  return problems;
-}
-
-/** 找出某个 key 对应的完整节点 id（`root/…/save`），用来构造真实事件。 */
-function nodeId(root, targetKey) {
-  let found = null;
-  const walk = (node, id) => {
-    if (found) return;
-    if (node.p && node.p.key === targetKey) {
-      found = id;
-      return;
-    }
-    node.c.forEach((c, i) => {
-      const k = c.p && c.p.key !== undefined ? c.p.key : i;
-      walk(c, `${id}/${k}`);
-    });
-  };
-  walk(root, "root");
-  return found;
-}
-
-/** 收集树里所有 callout 的 tone + text，便于断言「页面在说什么」。 */
-function callouts(node, out = []) {
-  if (node.k === "callout") out.push({ tone: node.p.tone || "info", text: String(node.p.text || ""), title: node.p.title });
-  for (const c of node.c) callouts(c, out);
-  return out;
-}
-
-function textOf(node, out = []) {
-  if (node.k === "text" && node.p.text) out.push(String(node.p.text));
-  for (const c of node.c) textOf(c, out);
-  return out;
-}
-
-/** 收集某类控件节点的 props（顺序即树的遍历顺序）。 */
-function controls(tree, kind, out = []) {
-  if (tree.k === kind) out.push(tree.p);
-  for (const c of tree.c) controls(c, kind, out);
-  return out;
-}
-
-/** 按 key 取某个控件的 props。 */
-const byKey = (tree, kind, key) => controls(tree, kind).filter((c) => c.key === key)[0];
-
-const mkCtx = () => ({
-  session: "s1",
-  props: {},
-  taskId: null,
-  locale: "zh-CN",
-  refresh() {},
-  close() {},
-  navigate: async () => {},
-});
-
-/** 用真实节点 id 构造事件；id 必须能在树里找到，否则是 key 写错了。 */
-function evOf(tree, key, type, value) {
-  const id = nodeId(tree, key);
-  if (!id) throw new Error(`树里找不到 key '${key}'（按钮点了不会有反应的那种错）`);
-  const ev = { node: id, type };
-  if (type === "change") ev.value = value;
-  return ev;
-}
-
-const press = (tree, key) => evOf(tree, key, "press");
-const change = (tree, key, value) => evOf(tree, key, "change", value);
-
-/** 打开视图：加载 dist/main.js，取回注册的定义。 */
-async function open(sc = {}) {
-  const r = await runEntry(DIST, {
-    entry: "main",
-    main: true,
-    settings: sc.settings || {},
-    updateError: sc.updateError,
-    steps: () => null,
-  });
-  if (r.loadError) throw new Error(r.loadError);
-  if (r.error) throw new Error(`main 抛错：${r.error}`);
-  return r;
-}
-
-/** 打开 + init + 首帧渲染。 */
-async function openView(sc = {}) {
-  const r = await open(sc);
-  const def = r.views[VIEW_ID];
-  if (!def) throw new Error(`未注册视图 '${VIEW_ID}'（已注册：${Object.keys(r.views).join(", ") || "无"}）`);
-  const ctx = mkCtx();
-  const state = def.init ? await def.init(ctx) : {};
-  const tree = await def.render(state, ctx);
-  const run = async (ev) => {
-    await def.event(state, ev, ctx);
-    return def.render(state, ctx);
-  };
-  return { ...r, def, ctx, state, tree, run };
-}
-
-/**
- * 打开视图并切到指定页签。页签是受控的，所以这里也走一次真实 `change` 事件 ——
- * 顺带验证「标签条把选中值写回 state」这条链路，而不是绕过它直接改 state。
- */
-async function openOn(tab, sc = {}) {
-  const v = await openView(sc);
-  if (tab === "basic") return v;
-  v.tree = await v.run(change(v.tree, "tab", tab));
-  if (v.state.tab !== tab) throw new Error(`切页签失败：state.tab = ${show(v.state.tab)}`);
-  return v;
-}
+const DEFAULT_WIDGET = { string: "text", number: "number", boolean: "toggle" };
 
 let pass = 0;
 let fail = 0;
-const failures = [];
 
 async function ck(name, fn) {
   try {
@@ -222,14 +75,12 @@ async function ck(name, fn) {
       console.log(`  ok   ${name}`);
     } else {
       fail++;
-      failures.push({ name, detail: r });
       console.log(`  FAIL ${name}`);
       console.log(`         ${r}`);
     }
   } catch (e) {
     fail++;
     const d = String((e && e.message) || e);
-    failures.push({ name, detail: d });
     console.log(`  FAIL ${name}`);
     console.log(`         ${d}`);
   }
@@ -238,484 +89,214 @@ async function ck(name, fn) {
 const eq = (actual, expected, label) =>
   JSON.stringify(actual) === JSON.stringify(expected)
     ? true
-    : `${label || "值"}不符：期望 ${show(expected)}，实际 ${show(actual)}`;
+    : `${label}：期望 ${show(expected)}，实际 ${show(actual)}`;
 
-const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
+const byKey = (k) => FIELDS.filter((f) => f.key === k)[0];
 
 // ---------------------------------------------------------------------------
-// 1. 声明与注册一致
+// 1. 声明结构：开关成组、三段顺序
 // ---------------------------------------------------------------------------
 {
-  const manifest = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
-  const declared = ((manifest.contributes && manifest.contributes.views) || []).map((v) => v.id);
+  await ck("结构：共 27 项且 key 唯一", async () => {
+    const keys = FIELDS.map((f) => f.key);
+    const uniq = new Set(keys);
+    if (uniq.size !== keys.length) return `key 重复：${show(keys)}`;
+    return eq(keys.length, 27, "设置项数");
+  });
 
-  await ck("声明：manifest 声明了 ad-rules 视图", () =>
-    declared.indexOf(VIEW_ID) >= 0 ? true : `声明的是 ${show(declared)}`);
+  await ck("结构：11 个开关连续排最前（宿主才并得成一张卡片）", async () => {
+    const head = FIELDS.slice(0, TOGGLE_KEYS.length).map((f) => f.key);
+    const r = eq(head, TOGGLE_KEYS, "前 11 项");
+    if (r !== true) return r;
+    const tail = FIELDS.slice(TOGGLE_KEYS.length);
+    const leaked = tail.filter((f) => f.type === "boolean").map((f) => f.key);
+    return leaked.length === 0 ? true : `开关段之后还有 boolean：${show(leaked)}`;
+  });
 
-  await ck("声明：manifest 的 main.entry 指向存在的脚本", () => {
-    const entry = manifest.main && manifest.main.entry;
-    if (entry !== "main.js") return `main.entry = ${show(entry)}`;
-    try {
-      readFileSync(join(DIST, entry));
-      return true;
-    } catch {
-      return `${entry} 不在 dist/ 里`;
+  await ck("结构：非开关 16 项按主题聚簇，去广告恰为最后两项", async () => {
+    const rest = FIELDS.slice(TOGGLE_KEYS.length);
+    const titles = rest.map((f) => f.title);
+    const runs = [];
+    for (const t of titles.map((x) => x.split(" · ")[0])) {
+      if (runs[runs.length - 1] !== t) runs.push(t);
     }
+    const r = eq(runs, THEMES, "主题序列");
+    if (r !== true) return r;
+    return eq(titles.slice(-2), ["去广告 · 模式", "去广告 · 自定义规则"], "末尾两项");
   });
 
-  await ck("注册：main 注册的视图覆盖全部声明", async () => {
-    const r = await open();
-    const registered = Object.keys(r.views);
-    const missing = declared.filter((id) => registered.indexOf(id) < 0);
-    return missing.length ? `未注册：${show(missing)}` : true;
-  });
-
-  await ck("注册：没有注册未声明的视图", async () => {
-    const r = await open();
-    const extra = Object.keys(r.views).filter((id) => declared.indexOf(id) < 0);
-    return extra.length ? `多注册了：${show(extra)}` : true;
-  });
-
-  await ck("位置：视图的 location 是 settings 且只有一个", () => {
-    const views = (manifest.contributes && manifest.contributes.views) || [];
-    const settingsViews = views.filter((v) => v.location === "settings");
-    return settingsViews.length === 1 ? true : `有 ${settingsViews.length} 个 settings 视图（至多一个）`;
-  });
-
-  await ck("权限：没有为视图引入新权限", () => {
-    const perms = manifest.permissions || [];
-    return perms.indexOf("desktop") < 0 && perms.indexOf("background") < 0
-      ? true
-      : `不该出现 desktop/background：${show(perms)}`;
+  await ck("结构：每项都有非空 title 与 description（不留无说明的裸字段）", async () => {
+    const bad = FIELDS.filter((f) => !f.title || !f.description);
+    return bad.length === 0 ? true : `缺 title/description：${show(bad.map((f) => f.key))}`;
   });
 }
 
 // ---------------------------------------------------------------------------
-// 2. 渲染树合法
+// 2. 主题前缀：「主题 · 项目」是平铺表单里唯一的分类路标
 // ---------------------------------------------------------------------------
 {
-  await ck("渲染：首帧通过 schema 校验", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
-    const p = checkTree(v.tree);
-    return p.length ? p.join("；") : true;
+  await ck("前缀：16 个非开关项标题全部符合「主题 · 项目」", async () => {
+    const bad = FIELDS.slice(TOGGLE_KEYS.length).filter((f) => !/^[^ ·]+ · \S/.test(f.title));
+    return bad.length === 0 ? true : `格式不合规：${show(bad.map((f) => [f.key, f.title]))}`;
   });
 
-  await ck("渲染：根节点有 heading，能看出这是什么页", async () => {
-    const v = await openView();
-    const heads = [];
-    const walk = (n) => {
-      if (n.k === "heading") heads.push(n.p.text);
-      n.c.forEach(walk);
-    };
-    walk(v.tree);
-    return heads.some((t) => /插件设置/.test(t)) ? true : `heading：${show(heads)}`;
-  });
-
-  await ck("渲染：三档模式选项齐全且 value 合法", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "heuristic" } });
-    const sel = byKey(v.tree, "select", "adRulesMode");
-    if (!sel) return "树里没有 adRulesMode 的 select";
-    const values = sel.options.map((o) => o.value);
-    return eq(values, ["off", "marker", "heuristic"], "模式选项") === true && sel.value === "heuristic"
-      ? true
-      : `当前值 ${show(sel.value)}，选项 ${show(values)}`;
-  });
-
-  await ck("渲染：设置值非法时回退 off（不让 select 出现不存在的 value）", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "bogus" } });
-    const sel = byKey(v.tree, "select", "adRulesMode");
-    return sel && sel.value === "off" ? true : `value = ${show(sel && sel.value)}`;
-  });
-
-  await ck("渲染：节点数与深度在引擎限制内", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker" } });
-    let n = 0;
-    let maxDepth = 0;
-    const walk = (node, d) => {
-      n++;
-      if (d > maxDepth) maxDepth = d;
-      node.c.forEach((c) => walk(c, d + 1));
-    };
-    walk(v.tree, 0);
-    return n < 5000 && maxDepth < 64 ? true : `节点 ${n}，深度 ${maxDepth}`;
-  });
-
-  await ck("渲染：每个预设都有按钮，且按钮 key 全局唯一", async () => {
-    const v = await openOn("ads");
-    const buttons = [];
-    const walk = (n) => {
-      if (n.k === "button") buttons.push(n.p.key);
-      n.c.forEach(walk);
-    };
-    walk(v.tree);
-    const uniq = new Set(buttons);
-    if (uniq.size !== buttons.length) return `key 重复：${show(buttons)}`;
-    // 5 个预设 + 保存 + 还原
-    return buttons.length === 7 ? true : `按钮 ${buttons.length} 个：${show(buttons)}`;
+  await ck("前缀：主题取自白名单且 9 类全覆盖", async () => {
+    const got = [...new Set(FIELDS.slice(TOGGLE_KEYS.length).map((f) => f.title.split(" · ")[0]))];
+    return eq(got, THEMES, "主题集合");
   });
 }
 
 // ---------------------------------------------------------------------------
-// 2b. 三个页签：基础（只有开关）/ 参数（填值）/ 去广告
+// 3. 默认值（方案A）：与 settings.ts 的读取兜底双向钉死
 // ---------------------------------------------------------------------------
 {
-  const MANIFEST = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
-  const DECLARED = MANIFEST.settings.map((x) => x.key);
-  const NAMES = ["基础设置", "参数设置", "去广告设置"];
-
-  await ck("页签：三个标签齐全，默认停在「基础设置」", async () => {
-    const v = await openView();
-    const t = byKey(v.tree, "tabs", "tab");
-    if (!t) return "树里没有 tabs 节点";
-    const labels = t.items.map((i) => i.label);
-    if (eq(labels, NAMES, "标签文案") !== true) return eq(labels, NAMES, "标签文案");
-    return t.value === "basic" ? true : `默认停在第 ${show(t.value)} 个页签`;
+  await ck("默认值：27 项与推荐值（方案A）逐项一致", async () => {
+    const bad = [];
+    for (const f of FIELDS) {
+      const got = f.default === undefined ? "" : String(f.default);
+      if (!(f.key in DEFAULTS)) bad.push([f.key, "不在清单里", got]);
+      else if (got !== DEFAULTS[f.key]) bad.push([f.key, DEFAULTS[f.key], got]);
+    }
+    const extra = Object.keys(DEFAULTS).filter((k) => !byKey(k));
+    if (extra.length) return `清单里有、manifest 没有：${show(extra)}`;
+    return bad.length === 0 ? true : `漂移 [key, 期望, 实际]：${show(bad)}`;
   });
 
-  await ck("页签：tabs 的 items 每项都有非空 value 与 label（引擎要求）", async () => {
-    const v = await openView();
-    const t = byKey(v.tree, "tabs", "tab");
-    const bad = t.items.filter((i) => typeof i.value !== "string" || !i.value || typeof i.label !== "string" || !i.label);
-    return bad.length === 0 ? true : `不合法：${show(bad)}`;
+  await ck("默认值：与 settings.ts 的 readSettings 兜底一致（防两侧漂移）", async () => {
+    const src = readFileSync(join(ROOT, "src/lib/settings.ts"), "utf8");
+    const want = {};
+    const re = /\b(str|bool|int)\("(\w+)",\s*([^)]+)\)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const [, fn, key, rawExpr] = m;
+      const lit = rawExpr.trim();
+      if (fn === "str") want[key] = lit.replace(/^"|"$/g, "");
+      else if (fn === "bool") want[key] = lit;
+      else want[key] = String(parseInt(lit, 10));
+    }
+    if (!Object.keys(want).length) return "settings.ts 里没解析到任何默认值（正则失效？）";
+    const bad = [];
+    for (const [key, def] of Object.entries(want)) {
+      const f = byKey(key);
+      if (!f) {
+        bad.push([key, "settings.ts 有、manifest 没有"]);
+        continue;
+      }
+      const got = f.default === undefined ? "" : String(f.default);
+      if (got !== def) bad.push([key, def, got]);
+    }
+    return bad.length === 0 ? true : `两侧不一致 [key, settings.ts, manifest]：${show(bad)}`;
   });
 
-  await ck("页签：基础设置里只有开关，没有任何输入/选择控件", async () => {
-    const v = await openView();
-    const others = ["input", "select", "textarea", "checkbox"].map((k) => controls(v.tree, k).length);
-    if (eq(others, [0, 0, 0, 0], "非开关控件数") !== true) return eq(others, [0, 0, 0, 0], "非开关控件数");
-    const sw = controls(v.tree, "switch");
-    return sw.length >= 8 ? true : `开关只有 ${sw.length} 个，基础页太空了`;
+  await ck("默认值：boolean 用 \"true\"/\"false\" 字符串，number 可解析", async () => {
+    const bad = FIELDS.filter((f) => {
+      const d = f.default === undefined ? "" : String(f.default);
+      if (f.type === "boolean") return d !== "true" && d !== "false";
+      if (f.type === "number") return d !== "" && isNaN(parseInt(d, 10));
+      return false;
+    });
+    return bad.length === 0 ? true : `类型不符：${show(bad.map((f) => [f.key, f.default]))}`;
   });
+}
 
-  await ck("页签：参数类设置项一个都不出现在基础设置", async () => {
-    const v = await openView();
-    const leaked = ["preferResolution", "nameTemplate", "authCookie", "targetHosts", "rangeCapKb"].filter(
-      (k) => byKey(v.tree, "select", k) || byKey(v.tree, "input", k) || byKey(v.tree, "textarea", k),
+// ---------------------------------------------------------------------------
+// 4. 字段合法性：select 选项、widget 矩阵、值域
+// ---------------------------------------------------------------------------
+{
+  await ck("select：options 非空且默认值落在选项内", async () => {
+    const bad = FIELDS.filter(
+      (f) =>
+        (f.widget || DEFAULT_WIDGET[f.type]) === "select" &&
+        (!Array.isArray(f.options) || !f.options.length || f.options.map((o) => o.value).indexOf(String(f.default)) < 0),
     );
-    return leaked.length === 0 ? true : `漏在基础页：${show(leaked)}`;
+    return bad.length === 0 ? true : `问题项：${show(bad.map((f) => f.key))}`;
   });
 
-  await ck("页签：切到参数设置后出现参数项，且不再渲染开关", async () => {
-    const v = await openOn("params");
-    const need = ["preferResolution", "nameTemplate", "authCookie", "targetHosts", "rangeCapKb"];
-    const missing = need.filter(
-      (k) => !byKey(v.tree, "select", k) && !byKey(v.tree, "input", k) && !byKey(v.tree, "textarea", k),
-    );
-    if (missing.length) return `仍缺：${show(missing)}`;
-    const sw = controls(v.tree, "switch").length;
-    return sw === 0 ? true : `参数页还渲染了 ${sw} 个开关（开关属基础页）`;
+  await ck("select：取值集合与运行时口径一致（防选项漂移）", async () => {
+    const bad = [];
+    for (const [key, want] of Object.entries(OPTION_SETS)) {
+      const f = byKey(key);
+      if (!f) {
+        bad.push([key, "manifest 没有"]);
+        continue;
+      }
+      const got = (f.options || []).map((o) => o.value);
+      if (JSON.stringify(got) !== JSON.stringify(want)) bad.push([key, want, got]);
+    }
+    return bad.length === 0 ? true : `漂移：${show(bad)}`;
   });
 
-  await ck("页签：切到去广告设置后只有这一组（模式 / 规则 / 预设）", async () => {
-    const v = await openOn("ads");
-    const has = [
-      !!byKey(v.tree, "select", "adRulesMode"),
-      !!byKey(v.tree, "textarea", "adRulesExtra"),
-      controls(v.tree, "button").filter((b) => String(b.key).indexOf("apply-") === 0).length,
-      controls(v.tree, "switch").length,
-      controls(v.tree, "input").length,
-    ];
-    return eq(has, [true, true, 5, 0, 0], "[模式, 规则, 预设数, 开关数, 输入框数]");
-  });
-
-  await ck("页签：受控 —— 选中值写回 state 且反映到下一帧", async () => {
-    const v = await openView();
-    const next = await v.run(change(v.tree, "tab", "ads"));
-    if (v.state.tab !== "ads") return `state.tab = ${show(v.state.tab)}`;
-    const t = byKey(next, "tabs", "tab");
-    return t && t.value === "ads" ? true : `下一帧 tabs.value = ${show(t && t.value)}`;
-  });
-
-  await ck("页签：未知页签值回到基础设置（不渲染空白页）", async () => {
-    const v = await openView();
-    const next = await v.run(change(v.tree, "tab", "nope"));
-    if (v.state.tab !== "basic") return `state.tab = ${show(v.state.tab)}`;
-    return controls(next, "switch").length > 0 ? true : "落在空页上了";
-  });
-
-  await ck("页签：切页签不丢草稿（跨页改多项后仍能一起保存）", async () => {
-    const v = await openOn("params");
-    await v.run(change(v.tree, "preferResolution", "720"));
-    const mid = await v.run(change(v.tree, "tab", "basic"));
-    if (v.state.draft.preferResolution !== "720") return `切页后草稿丢失：${show(v.state.draft.preferResolution)}`;
-    if (!textOf(mid).some((t) => /1 项未保存/.test(t))) return `未保存计数不对：${show(textOf(mid))}`;
-    const back = await v.run(change(mid, "tab", "params"));
-    const sel = byKey(back, "select", "preferResolution");
-    return sel && sel.value === "720" ? true : `回到参数页后 select.value = ${show(sel && sel.value)}`;
-  });
-
-  await ck("页签：三个页签合起来覆盖 manifest 的全部设置项", async () => {
-    // 视图里硬编码了全部 key（引擎没有分组字段，不能靠 manifest 驱动）。改名不同步 ⇒
-    // 用户改完保存会收到「未知设置项」，所以这里把「页面 vs manifest」钉死。
-    const rendered = [];
-    for (const tab of ["basic", "params", "ads"]) {
-      const v = await openOn(tab);
-      for (const kind of ["switch", "select", "input", "textarea"]) {
-        rendered.push(...controls(v.tree, kind).map((c) => c.key));
+  await ck("矩阵：widget×type 合法；number 带值域且默认在域内", async () => {
+    const bad = [];
+    for (const f of FIELDS) {
+      const w = f.widget || DEFAULT_WIDGET[f.type];
+      const allowed = WIDGET_MATRIX[f.type];
+      if (!allowed || allowed.indexOf(w) < 0) {
+        bad.push([f.key, `type=${f.type} widget=${w}`]);
+        continue;
+      }
+      if (f.type === "number") {
+        const d = parseInt(String(f.default), 10);
+        if (f.min === undefined || f.max === undefined) bad.push([f.key, "缺 min/max"]);
+        else if (!(f.min <= d && d <= f.max)) bad.push([f.key, `默认 ${d} 出域 [${f.min},${f.max}]`]);
       }
     }
-    const missing = DECLARED.filter((k) => rendered.indexOf(k) < 0);
-    if (missing.length) return `manifest 有、三个页签都没有：${show(missing)}`;
-    const extra = rendered.filter((k) => DECLARED.indexOf(k) < 0);
-    return extra.length === 0 ? true : `页面有、manifest 没有（保存会被拒）：${show(extra)}`;
+    return bad.length === 0 ? true : `问题项：${show(bad)}`;
   });
 
-  await ck("页签：每个 select 的当前值都在自己的 options 里（防视图与 manifest 漂移）", async () => {
+  await ck("凭据项保留 helperScript（一键复制取 Cookie 的脚本）", async () => {
+    const f = byKey("authCookie");
+    return f && f.helperScript && f.helperLabel
+      ? true
+      : `authCookie 的 helper 字段缺失：${show([f && f.helperScript, f && f.helperLabel])}`;
+  });
+
+  await ck("去广告规则项自带格式说明（预设按钮移除后的替代指引）", async () => {
+    const f = byKey("adRulesExtra");
+    const d = (f && f.description) || "";
+    const keys = ["keepPath", "dropPath", "dropHosts"].filter((k) => d.indexOf(k) < 0);
+    return keys.length === 0 ? true : `描述里缺规则键：${show(keys)}`;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 5. 产物形态：表单是唯一设置面，产物零 SDK 运行时
+// ---------------------------------------------------------------------------
+{
+  await ck("产物：manifest 无 main 入口、无 contributes.views", async () => {
     const bad = [];
-    for (const tab of ["params", "ads"]) {
-      const v = await openOn(tab);
-      // 空串表示这项没被赋值（真实宿主会按 manifest 的 default 填），不算漂移。
-      bad.push(
-        ...controls(v.tree, "select").filter(
-          (c) => c.value !== "" && c.options.map((o) => o.value).indexOf(c.value) < 0,
-        ),
-      );
-    }
-    return bad.length === 0 ? true : `值不在选项内：${show(bad.map((b) => [b.key, b.value]))}`;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 3. 规则校验（与拦截器同源）
-// ---------------------------------------------------------------------------
-{
-  const noDanger = (tree) => callouts(tree).filter((c) => c.tone === "danger");
-  const warns = (tree) => callouts(tree).filter((c) => c.tone === "warning");
-
-  await ck("校验：空规则不显示任何提示条", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
-    const all = callouts(v.tree);
-    return all.length === 0 ? true : `出现 ${show(all)}`;
+    if (MANIFEST.main !== undefined) bad.push("main");
+    if (MANIFEST.contributes !== undefined) bad.push("contributes");
+    return bad.length === 0 ? true : `仍声明 ${show(bad)}（表单必须是唯一设置面）`;
   });
 
-  await ck("校验：合法规则显示「解析通过」", async () => {
-    const v = await openOn("ads", {
-      settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' },
-    });
-    const ok = callouts(v.tree).filter((c) => c.tone === "success");
-    return ok.length === 1 && /通过/.test(ok[0].text) ? true : `提示：${show(callouts(v.tree))}`;
+  await ck("产物：dist/manifest.json 与根清单一致", async () => {
+    const a = readFileSync(join(DIST, "manifest.json"), "utf8");
+    const b = readFileSync(join(ROOT, "manifest.json"), "utf8");
+    return a === b ? true : "两份 manifest 内容不同（构建后忘了拷贝？）";
   });
 
-  await ck("校验：JSON 语法错 → 拦住保存的 danger", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "{not json" } });
-    const d = noDanger(v.tree);
-    return d.length === 1 && /JSON 语法错误/.test(d[0].text) ? true : `danger：${show(d)}`;
+  await ck("产物：入口与 config.json 映射一致，且没有 main.js", async () => {
+    const cfg = JSON.parse(readFileSync(join(ROOT, "fluxdown-plugin.config.json"), "utf8"));
+    const want = Object.keys(cfg.entries).sort();
+    const got = readdirSync(DIST).filter((f) => f.endsWith(".js")).sort();
+    return eq(got, want, "dist 入口");
   });
 
-  await ck("校验：顶层是数组 → 拦住（必须是对象）", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '["/ads/"]' } });
-    const d = noDanger(v.tree);
-    return d.length === 1 && /顶层必须是 JSON 对象/.test(d[0].text) ? true : `danger：${show(d)}`;
-  });
-
-  await ck("校验：未知键（dropPaths）→ 警告并点名", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPaths":["/ads/"]}' } });
-    const w = warns(v.tree);
-    return w.length === 1 && /dropPaths/.test(w[0].text) ? true : `warning：${show(w)}`;
-  });
-
-  await ck("校验：非法正则 → 警告（运行时容错跳过，不拦保存）", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads("]}' } });
-    const w = warns(v.tree);
-    const d = noDanger(v.tree);
-    return w.length === 1 && d.length === 0 ? true : `warning ${show(w)} / danger ${show(d)}`;
-  });
-
-  await ck("校验：off 模式下语法错不拦保存（只是警告）", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "{bad" } });
-    const d = noDanger(v.tree);
-    const w = warns(v.tree);
-    return d.length === 0 && w.length === 1 && /不生效/.test(w[0].text) ? true : `danger ${show(d)} / warning ${show(w)}`;
-  });
-
-  await ck("校验：生效条数写进 kv", async () => {
-    const v = await openOn("ads", {
-      settings: { adRulesMode: "marker", adRulesExtra: '{"keepPath":["/ep1/"],"dropHosts":["ads.test"]}' },
-    });
-    const texts = textOf(v.tree).join(" ");
-    return /白名单 1 条/.test(texts) && /广告主机 1 个/.test(texts)
-      ? true
-      : `正文里没有条数摘要：${show(texts.slice(0, 300))}`;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 4. 交互：受控输入必须写回 state
-// ---------------------------------------------------------------------------
-{
-  await ck("交互：切换模式写回 state 并反映到下一帧", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "off" } });
-    const next = await v.run(change(v.tree, "adRulesMode", "heuristic"));
-    if (v.state.draft.adRulesMode !== "heuristic") return `草稿 = ${show(v.state.draft.adRulesMode)}`;
-    const sel = byKey(next, "select", "adRulesMode");
-    return sel && sel.value === "heuristic" ? true : `下一帧 select.value = ${show(sel && sel.value)}`;
-  });
-
-  await ck("交互：模式值非法时按 off 处理", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker" } });
-    await v.run(change(v.tree, "adRulesMode", "whatever"));
-    return v.state.draft.adRulesMode === "off" ? true : `state.mode = ${show(v.state.draft.adRulesMode)}`;
-  });
-
-  await ck("交互：编辑规则文本写回 state，并立刻重新校验", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
-    const next = await v.run(change(v.tree, "adRulesExtra", "{oops"));
-    if (v.state.draft.adRulesExtra !== "{oops") return `state.extra = ${show(v.state.draft.adRulesExtra)}`;
-    const d = callouts(next).filter((c) => c.tone === "danger");
-    return d.length === 1 ? true : `danger ${show(d)}`;
-  });
-
-  await ck("交互：未保存时「保存」按钮从禁用变为可用", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
-    const disabledOf = (tree, key) => {
-      const out = [];
-      const walk = (n) => {
-        if (n.k === "button" && n.p.key === key) out.push(!!n.p.disabled);
-        n.c.forEach(walk);
-      };
-      walk(tree);
-      return out[0];
-    };
-    const before = disabledOf(v.tree, "save");
-    const next = await v.run(change(v.tree, "adRulesMode", "heuristic"));
-    const after = disabledOf(next, "save");
-    return before === true && after === false ? true : `保存前 ${before}，改动后 ${after}`;
-  });
-
-  await ck("交互：套用「广告目录过滤」预设 → mode 与规则文本同时更新", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
-    const next = await v.run(press(v.tree, "apply-dirs"));
-    if (v.state.draft.adRulesMode !== "heuristic") return `state.mode = ${show(v.state.draft.adRulesMode)}`;
-    const parsed = JSON.parse(v.state.draft.adRulesExtra);
-    if (!/\/ads\?\//.test(parsed.dropPath.join(","))) return `dropPath = ${show(parsed.dropPath)}`;
-    const ok = callouts(next).filter((c) => c.tone === "danger");
-    return ok.length === 0 ? true : `预设本身不该产生 danger：${show(ok)}`;
-  });
-
-  await ck("交互：套用「关闭」预设清空规则文本", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' } });
-    await v.run(press(v.tree, "apply-off"));
-    return v.state.draft.adRulesMode === "off" && v.state.draft.adRulesExtra === "" ? true : `mode ${show(v.state.draft.adRulesMode)} extra ${show(v.state.draft.adRulesExtra)}`;
-  });
-
-  await ck("交互：还原回到已保存的值", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/x/"]}' } });
-    await v.run(change(v.tree, "adRulesMode", "heuristic"));
-    await v.run(change(v.tree, "adRulesExtra", "{broken"));
-    await v.run(press(v.tree, "reset"));
-    return v.state.draft.adRulesMode === "marker" && v.state.draft.adRulesExtra === '{"dropPath":["/x/"]}'
-      ? true
-      : `mode ${show(v.state.draft.adRulesMode)} extra ${show(v.state.draft.adRulesExtra)}`;
-  });
-
-  await ck("交互：未知 key 的事件不改变 state（不崩）", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker" } });
-    await v.run({ node: "root/nope", type: "press" });
-    await v.run({ node: "root/nope", type: "change", value: "x" });
-    return v.state.draft.adRulesMode === "marker" && v.state.draft.adRulesExtra === "" ? true : `state 被改坏了：${show(v.state)}`;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 5. 保存
-// ---------------------------------------------------------------------------
-{
-  await ck("保存：只写两个键，且值都是字符串", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
-    await v.run(change(v.tree, "adRulesMode", "heuristic"));
-    await v.run(change(v.tree, "adRulesExtra", '{"dropPath":["/ads/"]}'));
-    await v.run(press(v.tree, "save"));
-    const u = updates(v);
-    if (u.length !== 1) return `update 调用了 ${u.length} 次`;
-    const payload = u[0][1];
-    if (JSON.stringify(Object.keys(payload).sort()) !== JSON.stringify(["adRulesExtra", "adRulesMode"])) {
-      return `键不对：${show(Object.keys(payload))}`;
-    }
-    const bad = Object.keys(payload).filter((k) => typeof payload[k] !== "string");
-    return bad.length === 0 ? true : `非字符串值：${show(bad.map((k) => [k, typeof payload[k]]))}`;
-  });
-
-  await ck("保存：成功后 saved* 同步，未保存标记消失", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
-    await v.run(change(v.tree, "adRulesMode", "marker"));
-    const next = await v.run(press(v.tree, "save"));
-    if (v.state.saved.adRulesMode !== "marker") return `savedMode = ${show(v.state.saved.adRulesMode)}`;
-    const hints = textOf(next);
-    return hints.some((t) => /与已保存的值一致/.test(t)) ? true : `提示：${show(hints)}`;
-  });
-
-  await ck("保存：语法错时不调用 update，并给出 danger", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
-    await v.run(change(v.tree, "adRulesExtra", "{broken"));
-    const next = await v.run(press(v.tree, "save"));
-    const u = updates(v);
-    if (u.length !== 0) return `不该调用 update，实际 ${show(u)}`;
-    const d = callouts(next).filter((c) => c.tone === "danger");
-    return d.length >= 1 && /未保存/.test(d[d.length - 1].text) ? true : `danger ${show(d)}`;
-  });
-
-  await ck("保存：off 模式下语法错仍然允许保存", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
-    await v.run(change(v.tree, "adRulesExtra", "{broken"));
-    await v.run(press(v.tree, "save"));
-    return updates(v).length === 1 ? true : "off 模式被拦住了 —— 用户会没法先关掉再慢慢改";
-  });
-
-  await ck("保存：宿主拒绝时原文透传且 saved* 不变", async () => {
-    const v = await openOn("ads", {
-      settings: { adRulesMode: "marker", adRulesExtra: "" },
-      updateError: "'adRulesExtra' 不是合法的 JSON",
-    });
-    await v.run(change(v.tree, "adRulesMode", "heuristic"));
-    const next = await v.run(press(v.tree, "save"));
-    if (v.state.saved.adRulesMode !== "marker") return `savedMode 被改成了 ${show(v.state.saved.adRulesMode)}`;
-    const d = callouts(next).filter((c) => c.tone === "danger");
-    return d.length === 1 && /不是合法的 JSON/.test(d[0].text) ? true : `danger ${show(d)}`;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 6. main 不越界
-// ---------------------------------------------------------------------------
-{
-  await ck("越界：main 不发请求、不读 storage、不碰 ffmpeg", async () => {
-    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' } });
-    await v.run(change(v.tree, "adRulesMode", "heuristic"));
-    await v.run(press(v.tree, "apply-guard"));
-    await v.run(press(v.tree, "save"));
-    const bad = v.liveCalls.filter((c) => c[0] === "fetch" || c[0] === "storage.get" || c[0] === "storage.set" || /ffmpeg|ytdlp|ffprobe/.test(String(c[0])));
-    return bad.length === 0 ? true : `发生了 ${show(bad)}`;
-  });
-
-  await ck("越界：没有多余的命令 / rpc / 事件订阅", async () => {
-    const v = await openView();
-    const extra = v.liveCalls.filter((c) => /^(commands\.|rpc\.|events\.)/.test(String(c[0])));
-    return extra.length === 0 ? true : `注册了 ${show(extra)}`;
-  });
-
-  await ck("越界：只注册一次视图（重复求值不会重复注册）", async () => {
-    const v = await openView();
-    const regs = v.liveCalls.filter((c) => c[0] === "ui.view");
-    return regs.length === 1 ? true : `ui.view 调用了 ${regs.length} 次`;
-  });
-
-  // ADR-0005 的红线：SDK 运行时只允许出现在 main.js。这条断言守的是「例外不得扩大」——
-  // 有人给别的入口写了 JSX，jsx-runtime 就会被内联进那个产物，AGPL 面积随之变大。
-  await ck("例外边界：jsx 运行时只在 main.js，其他入口零 SDK 运行时", async () => {
+  // 红线 #3 的新形态：视图删除后任何入口都不许再引入 SDK 运行时。
+  // 这条断言守的是「禁令不得被悄悄打破」——有人写了 JSX，jsx-runtime 就会被
+  // 内联进产物，AGPL 面积随之扩大。
+  await ck("例外边界：全部入口零 SDK 运行时（jsx 运行时不再有例外）", async () => {
     const marker = "#fragment";
-    const mainSrc = readFileSync(join(DIST, "main.js"), "utf8");
-    if (!mainSrc.includes(marker)) return "main.js 里找不到 jsx 运行时，视图会在运行时崩";
-    // 入口清单从产物目录取，而不是硬编码：删/加入口时这条断言不该跟着改，
-    // 否则「忘了同步」会被误读成「没有泄漏」。
-    const others = readdirSync(DIST).filter((f) => f.endsWith(".js") && f !== "main.js");
-    if (!others.length) return "产物里没有其他入口，断言失去意义";
-    const leaked = others.filter((f) => readFileSync(join(DIST, f), "utf8").includes(marker));
-    return leaked.length === 0 ? true : `${leaked.join(", ")} 也内联了 jsx 运行时（ADR-0005 的例外不得扩大）`;
+    const files = readdirSync(DIST).filter((f) => f.endsWith(".js"));
+    if (!files.length) return "dist 里没有入口产物";
+    const leaked = files.filter((f) => readFileSync(join(DIST, f), "utf8").includes(marker));
+    return leaked.length === 0 ? true : `${leaked.join(", ")} 内联了 jsx 运行时（红线 #3：全部入口禁止）`;
   });
 }
 
-console.log(`\n${pass}/${pass + fail} 项视图契约通过`);
+console.log(`\n${pass}/${pass + fail} 项设置表单契约通过`);
 if (fail) {
-  console.error(`\n${fail} 项未通过 —— 设置页签的行为不符合预期。`);
+  console.error(`\n${fail} 项未通过 —— 设置表单的声明或产物不符合预期。`);
   process.exit(1);
 }

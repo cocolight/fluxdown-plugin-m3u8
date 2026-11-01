@@ -364,12 +364,11 @@ async function resolve(ctx: ResolveContext): Promise<ResolveResult | null> { /* 
 globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物零 SDK 代码
 ```
 
-> M5 起有**一处例外**：`main.tsx` 的 JSX 运行时（`sdk/ui/jsx-runtime`）随 `dist/main.js` 分发，
-> 授权义务登记在 `../THIRD-PARTY.md`，决策见 ADR-0005。上面这条对其余五个入口（resolver / hooks /
-> auth / subscribe / intercept）仍然成立 —— 例外不得扩大。
+> 视图删除后**没有任何例外**：产物零 SDK 运行时（`tests/ui.mjs` 有产物级断言，红线见 AGENTS.md）。
+> M5 期间曾为 `main.tsx` 的 JSX 运行时开过例外（ADR-0005），已随 ADR-0009 解除。
 
 代价：失去 `defineHooks` / `defineInterceptors` 的阶段分发糖（自己写 `switch (ctx.stage)` 即可）。
-收益：`dist/` 里除自己的代码、esbuild 运行时代与 `main.js` 的 JSX 运行时之外无第三方内容。
+收益：`dist/` 里除自己的代码与 esbuild 运行时代之外无第三方内容。
 已发布的 `youtube-down` 示例插件用的是 SDK 辅助函数 —— 值得看一眼它的 `license` 字段怎么写的，作为对照。
 
 ### 7.4 其它风险
@@ -391,7 +390,7 @@ globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物
 | **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 | **已完成**（见 8.3） |
 | **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 | **已完成**（2.1.0） |
 | **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；`rangeCapKb` → `maxRangeBytes`；`finalize.replaceWith` **本轮不做**（见 8.5） | 删除任务时产物一并删除；已是 MP4 家族的文件不再整份复制；探测不可用时行为与 v1.8.0 逐字一致 | 已完成（2.2.0） |
-| **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" | **已完成**（2.3.0，见 8.6） |
+| **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" | **已删除**（视图与 `main` 入口随 ADR-0009 移除，设置面 = 宿主表单，见 8.8） |
 
 M5 说明：`location: "settings"` **至多一个**视图，它是在自动生成的「基础设置」页签**旁边新增**
 一个「插件设置」页签，**不替换**默认表单 —— 官方《视图》参考写的是「插件设置对话框中的一个标签页」，
@@ -399,6 +398,7 @@ M5 说明：`location: "settings"` **至多一个**视图，它是在自动生�
 早期版本误记为「替换」，据此做的「必须在视图里重做 27 个设置项」判断不成立，已删除。
 `desktop` 入口会拉高到**完全风险**等级并需要 `desktop` 权限 —— **不要**为了界面顺手引入，
 可移植视图（`main` + JSX）已经够用，且 Web 端同样渲染。
+3.0.0 末态：视图已删除，设置面收敛为宿主自动生成的表单（见 8.8 与 ADR-0009）。
 
 ### 8.1 M1 落地结果（2026-11-01）
 
@@ -427,7 +427,7 @@ dist/（不入库）                                .github/workflows/ci.yml
 | `npm run validate` | `valid (risk: elevated)` —— elevated 来自既有 `auth` / `ffmpeg` 权限，非新增 |
 | `npm run parity` | **67/67 场景一致** |
 | 变异自检 | 故意改坏一处字符串 → 15 个场景报差异，确认比对器不会"假绿" |
-| 产物许可证洁净度 | `dist/*.js` 中 SDK 运行时命中数为 **0**（全程只用 `import type`）；**M5 起 `main.js` 例外**，见 8.6 与 ADR-0005 |
+| 产物许可证洁净度 | `dist/*.js` 中 SDK 运行时命中数为 **0**（全程只用 `import type`）；M5 曾为 `main.js` 开例外（ADR-0005），已随 ADR-0009 解除 |
 
 开发工作流因此变更（对使用者是 breaking）：**「从目录安装」自本版起指向 `dist/`**，`src/` 不再含 `manifest.json`。
 `.fxplug` 发布包内容不变，故已装用户无感。
@@ -669,6 +669,28 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 
 ---
 
+### 8.8 设置面第四次形态：删视图，收敛为宿主表单（2026-11-02，并入 3.0.0）
+
+8.7 的三页签是「宿主页签（插件设置 / 基础设置）+ 视图内页签」的嵌套结构，用户看到的是两层菜单。
+终态是**零页签**：删掉 `contributes.views` 与 `main` 入口，设置面只剩宿主从 `manifest.settings[]`
+自动生成的表单（SDK 标准路径）。宿主只在「视图 + 表单」并存时才画页签条（`plugin_settings.rs:537`
+「只有一个可用内容时不显示 tab 栏」），视图一走，页签条整个消失。
+
+分门别类改在声明里做：11 个开关连续排最前（宿主把连续开关合并进同一张卡片），14 个参数按主题聚簇、
+标题带「主题 · 项目」前缀，去广告 2 项殿后。默认值维持推荐值（方案A），由 `tests/ui.mjs` 的
+`DEFAULTS` 与「manifest ↔ settings.ts 对账」双向钉死。
+
+代价与收益：
+
+1. **去广告预设按钮与即时校验随视图移除**（`adpresets.ts` / `rulecheck.ts` 一并删）。模式选择覆盖
+   基本用法；自定义规则的 JSON 示例写进字段描述与 `docs/settings.md`。
+2. **产物零 SDK 运行时**：`dist` 少一个入口与内联的 jsx-runtime（约 -11 KB），AGPL 面积清零（ADR-0005 解除）。
+3. `tests/ui.mjs` 48 → 18 项，从渲染测试改为**声明契约**（开关成组 / 主题前缀 / 默认值锁定 /
+   select 选项 / 产物形态）；`contract` +3 项（无 main / 无 views / 无 main.js）。
+4. 变异自检三处：开关挪位 4 项红、默认值改动 2 项红、去主题前缀 1 项红。
+
+---
+
 ## 九、待实测验证清单（装机必做，按优先级）
 
 | # | 待验点 | 为什么重要 | 判定方法 |
@@ -691,11 +713,9 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 | 16 | `flux.ffprobe` 是否总与 `flux.ffmpeg` 同在 | 不同在时探测恒失败 → 退化为扩展名判断（不误伤，但 M4 的收益消失） | 装 ffmpeg 组件后 `flux.ffprobe` 是否为 undefined；再手工删掉 bin 目录里的 ffprobe 复看 |
 | 17 | `maxRangeBytes` 与 `ephemeral` / `totalBytes` 的组合 | 文档要求「已知 `totalBytes`」，未知大小时该设置是否被静默忽略 | 网盘 CDN 直链开 `ephemeral` + 填 `rangeCapKb`，看是否仍整段下载 |
 | 18 | 同一任务重复 `onDone`（暂停后恢复）是否重复登记 | 重复登记同名产物若报错会刷 warn；若幂等则无影响 | 下载中暂停→恢复两次，看日志有无「产物登记失败」 |
-| 19 | 设置页签在桌面端与 Web 端是否都出现 | M5 的验收标准之一，无图形环境无法自证；`settings` 页签在 Web 端「仅当插件已启用、已加载且授权齐全时出现」 | 两端各打开一次插件设置，确认「插件设置」页签与「基础设置」页签**并存**（不是替换） |
-| 20 | `flux.settings.update` 落库后同一宿主的可见时机 | 文档说「当前调用结束后才进入 `flux.settings`」；若实际延迟更久，保存后立刻点「还原」会读到旧值 | 在设置页签改值→保存→立刻重开视图，看是否读到新值 |
-| 21 | `main` 的 5 分钟空闲回收对打开中的视图是否生效 | 若回收时视图仍打开，用户会看到「会话已结束」；影响是否要加保活 | 打开视图不动 6 分钟，看是否弹「重新打开」 |
-| 22 | 视图 key 重复时引擎是报错还是静默取后者 | `tests/ui.mjs` 按「同级 key 不得重复」断言；若引擎实际宽容，断言属于偏严（不造成误报，但要知道） | 临时造两个同 key 的按钮，看客户端是否显示错误条 |
-| 23 | `tabs` 在两端的切换与受控行为 | 三个页签是本轮唯一新增的交互形态；若某端点了不切换、`value` 不回显，用户会以为设置丢了 | 两端各点一遍三个标签：选中的标签是否高亮、内容是否跟着换、切回原页签时刚才的改动是否还在 |
+> 第 19–23 项（设置页签渲染、`flux.settings.update` 可见时机、`main` 空闲回收、视图 key 重复、
+> `tabs` 切换）随自定义视图删除而失效（ADR-0009），已从清单移除。设置表单由宿主渲染，
+> 其两端表现属宿主自身行为，不再是插件待验点。
 
 ---
 

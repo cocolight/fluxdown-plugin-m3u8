@@ -50,22 +50,88 @@
     "timeoutMs": 5000,
     "onFailure": "continue"
   },
-  "main": {
-    "entry": "main.js"
-  },
-  "contributes": {
-    "views": [
-      {
-        "id": "ad-rules",
-        "title": "插件设置",
-        "location": "settings"
-      }
-    ]
-  },
   "settings": [
     {
+      "key": "solveChallenge",
+      "title": "自动过「安全检查」页",
+      "description": "遇到防抓页时解出 Cookie 并对同一地址重试一次。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "followIframe",
+      "title": "跟随内嵌播放器",
+      "description": "页面里没有 m3u8 时，跟进 iframe 再找一层。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "detectDash",
+      "title": "识别 DASH 清单",
+      "description": "页面只给 .mpd 时也能发现并交给核心下载。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "detectSeries",
+      "title": "识别剧集页",
+      "description": "命中剧集特征时弹出选集框。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "htmlFallbackYtdlp",
+      "title": "抓到网页时用 yt-dlp 兜底",
+      "description": "返回 HTML 而非播放列表时，改用 yt-dlp 重抽直链。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "autoPick",
+      "title": "自动选最高画质",
+      "description": "关闭后每次下载前弹窗让你自己挑清晰度。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
+      "key": "useYtdlp",
+      "title": "复杂站点交给 yt-dlp",
+      "description": "内置解析抓不到时改用 yt-dlp 重试，需已安装该组件。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
+      "key": "audioOnly",
+      "title": "只要音频",
+      "description": "跳过视频，只下载音轨。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
+      "key": "remuxToMp4",
+      "title": "转成 MP4",
+      "description": "容器不标准时无损转封装，多花一点时间。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "fixMuxFallback",
+      "title": "合并失败时插件兜底",
+      "description": "音视频分轨下载后核心合并失败，用 ffmpeg 再试一次。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "ephemeral",
+      "title": "一次性签名链接",
+      "description": "跳过元数据探测直接下载，适合会过期的直链。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
       "key": "preferResolution",
-      "title": "画质",
+      "title": "画质 · 档位",
+      "description": "默认选中的清晰度档位；开启「自动选最高画质」时也按它取。",
       "type": "string",
       "widget": "select",
       "options": [
@@ -93,202 +159,8 @@
       "default": "best"
     },
     {
-      "key": "autoPick",
-      "title": "自动选最高画质",
-      "type": "boolean",
-      "default": "false",
-      "description": "关闭后每次下载前弹窗让你自己挑清晰度。"
-    },
-    {
-      "key": "nameTemplate",
-      "title": "文件命名",
-      "description": "留空 =「标题-清晰度」。支持 {title} {author} {quality} 等占位符。",
-      "type": "string",
-      "widget": "text",
-      "default": "{title} {host}"
-    },
-    {
-      "key": "authCookie",
-      "title": "登录凭据",
-      "description": "只发给同一站点的请求。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
-      "type": "string",
-      "widget": "textarea",
-      "default": "",
-      "helperScript": "copy(document.cookie)",
-      "helperLabel": "复制取 Cookie 的脚本"
-    },
-    {
-      "key": "userAgent",
-      "title": "User-Agent",
-      "description": "留空用 FluxDown 默认。部分站点按 UA 返回不同清晰度。",
-      "type": "string",
-      "widget": "text",
-      "default": ""
-    },
-    {
-      "key": "extraHeadersRaw",
-      "title": "额外请求头",
-      "description": "每行一条「键: 值」，以 # 开头为注释。同名头会覆盖插件自动推导的 Referer/Origin。",
-      "type": "string",
-      "widget": "textarea",
-      "default": ""
-    },
-    {
-      "key": "separateAudio",
-      "title": "独立音轨",
-      "description": "音视频分开的站点选哪条音轨。",
-      "type": "string",
-      "widget": "select",
-      "options": [
-        {
-          "value": "auto",
-          "label": "自动判断（默认）"
-        },
-        {
-          "value": "on",
-          "label": "总是分离"
-        },
-        {
-          "value": "off",
-          "label": "关闭"
-        }
-      ],
-      "default": "auto"
-    },
-    {
-      "key": "audioOnly",
-      "title": "只要音频",
-      "description": "跳过视频，只下载音轨。",
-      "type": "boolean",
-      "default": "false"
-    },
-    {
-      "key": "remuxToMp4",
-      "title": "转成 MP4",
-      "description": "容器不标准时无损转封装，多花一点时间。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "useYtdlp",
-      "title": "复杂站点交给 yt-dlp",
-      "description": "内置解析抓不到时改用 yt-dlp 重试，需已安装该组件。",
-      "type": "boolean",
-      "default": "false"
-    },
-    {
-      "key": "adRulesMode",
-      "title": "去广告",
-      "description": "下载前丢弃广告分片。只对本插件解析出来的任务生效。",
-      "type": "string",
-      "widget": "select",
-      "options": [
-        {
-          "value": "off",
-          "label": "关闭（默认）"
-        },
-        {
-          "value": "marker",
-          "label": "仅按广告标记（保守）"
-        },
-        {
-          "value": "heuristic",
-          "label": "标记 + 推测（激进）"
-        }
-      ],
-      "default": "off"
-    },
-    {
-      "key": "adRulesExtra",
-      "title": "去广告自定义规则",
-      "description": "JSON，可留空。三个键：keepPath / dropPath / dropHosts；在插件设置页里有即时校验与预设。",
-      "type": "string",
-      "widget": "textarea",
-      "default": ""
-    },
-    {
-      "key": "targetHosts",
-      "title": "只在这些站点生效",
-      "description": "逗号分隔的主机名；留空 = 对所有站点生效。",
-      "type": "string",
-      "widget": "text"
-    },
-    {
-      "key": "solveChallenge",
-      "title": "自动过「安全检查」页",
-      "description": "遇到防抓页时解出 Cookie 并对同一地址重试一次。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "followIframe",
-      "title": "跟随内嵌播放器",
-      "description": "页面里没有 m3u8 时，跟进 iframe 再找一层。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "iframeMaxFollow",
-      "title": "内嵌最多跟进几层",
-      "description": "1–3，默认 1。",
-      "type": "number",
-      "widget": "number",
-      "default": "1",
-      "min": 1,
-      "max": 3
-    },
-    {
-      "key": "detectDash",
-      "title": "识别 DASH 清单",
-      "description": "页面只给 .mpd 时也能发现并交给核心下载。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "htmlFallbackYtdlp",
-      "title": "抓到网页时用 yt-dlp 兜底",
-      "description": "返回 HTML 而非播放列表时，改用 yt-dlp 重抽直链。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "detectSeries",
-      "title": "识别剧集页",
-      "description": "命中剧集特征时弹出选集框。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "manifestMinItems",
-      "title": "判为剧集的最少条目",
-      "description": "低于此数量不弹选集框，避免误判。",
-      "type": "number",
-      "widget": "number",
-      "default": "3",
-      "min": 2,
-      "max": 50
-    },
-    {
-      "key": "manifestMaxItems",
-      "title": "选集框最多列几条",
-      "description": "超出部分不列出。",
-      "type": "number",
-      "widget": "number",
-      "default": "200",
-      "min": 1,
-      "max": 1000
-    },
-    {
-      "key": "episodeLinkPattern",
-      "title": "自定义剧集链接正则",
-      "description": "留空用内置规则。",
-      "type": "string",
-      "widget": "text",
-      "default": ""
-    },
-    {
       "key": "preferCodec",
-      "title": "编码偏好",
+      "title": "画质 · 编码偏好",
       "description": "H.264 兼容性最好；H.265 体积小，但部分播放器不支持。",
       "type": "string",
       "widget": "select",
@@ -317,24 +189,118 @@
       "default": "auto"
     },
     {
+      "key": "separateAudio",
+      "title": "音轨 · 独立音轨",
+      "description": "音视频分开的站点选哪条音轨。",
+      "type": "string",
+      "widget": "select",
+      "options": [
+        {
+          "value": "auto",
+          "label": "自动判断（默认）"
+        },
+        {
+          "value": "on",
+          "label": "总是分离"
+        },
+        {
+          "value": "off",
+          "label": "关闭"
+        }
+      ],
+      "default": "auto"
+    },
+    {
       "key": "audioLang",
-      "title": "音轨语言",
+      "title": "音轨 · 语言",
       "description": "留空不限，例如 chi / jpn。",
       "type": "string",
       "widget": "text",
       "default": ""
     },
     {
-      "key": "ephemeral",
-      "title": "一次性签名链接",
-      "description": "跳过元数据探测直接下载，适合会过期的直链。",
-      "type": "boolean",
-      "default": "false"
+      "key": "nameTemplate",
+      "title": "命名 · 文件名模板",
+      "description": "占位符 {title} {res} {lang} {host} {date}，未知的自动清掉。只写 {title} 或留空 = 不加域名后缀。",
+      "type": "string",
+      "widget": "text",
+      "default": "{title} {host}"
+    },
+    {
+      "key": "targetHosts",
+      "title": "站点 · 生效范围",
+      "description": "逗号分隔的主机名；留空 = 对所有站点生效。",
+      "type": "string",
+      "widget": "text"
+    },
+    {
+      "key": "authCookie",
+      "title": "站点 · 登录凭据",
+      "description": "只发给同一站点的请求。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
+      "type": "string",
+      "widget": "textarea",
+      "default": "",
+      "helperScript": "copy(document.cookie)",
+      "helperLabel": "复制取 Cookie 的脚本"
+    },
+    {
+      "key": "userAgent",
+      "title": "网络 · User-Agent",
+      "description": "留空用 FluxDown 默认。部分站点按 UA 返回不同清晰度。",
+      "type": "string",
+      "widget": "text",
+      "default": ""
+    },
+    {
+      "key": "extraHeadersRaw",
+      "title": "网络 · 额外请求头",
+      "description": "每行一条「键: 值」，以 # 开头为注释。同名头会覆盖插件自动推导的 Referer/Origin。",
+      "type": "string",
+      "widget": "textarea",
+      "default": ""
+    },
+    {
+      "key": "iframeMaxFollow",
+      "title": "解析 · 内嵌最多跟进几层",
+      "description": "1–3，默认 1。",
+      "type": "number",
+      "widget": "number",
+      "default": "1",
+      "min": 1,
+      "max": 3
+    },
+    {
+      "key": "manifestMinItems",
+      "title": "剧集 · 最少条目",
+      "description": "低于此数量不弹选集框，避免误判。",
+      "type": "number",
+      "widget": "number",
+      "default": "3",
+      "min": 2,
+      "max": 50
+    },
+    {
+      "key": "manifestMaxItems",
+      "title": "剧集 · 选集上限",
+      "description": "超出部分不列出。",
+      "type": "number",
+      "widget": "number",
+      "default": "200",
+      "min": 1,
+      "max": 1000
+    },
+    {
+      "key": "episodeLinkPattern",
+      "title": "剧集 · 链接正则",
+      "description": "留空用内置规则。",
+      "type": "string",
+      "widget": "text",
+      "default": ""
     },
     {
       "key": "rangeCapKb",
-      "title": "单次 Range 上限（KiB）",
-      "description": "0 = 不限制；低于 64 按关闭处理。",
+      "title": "下载 · Range 上限",
+      "description": "单位 KiB。0 = 不限制；低于 64 按关闭处理。",
       "type": "number",
       "widget": "number",
       "default": "0",
@@ -342,11 +308,34 @@
       "max": 65536
     },
     {
-      "key": "fixMuxFallback",
-      "title": "合并失败时插件兜底",
-      "description": "音视频分轨下载后核心合并失败，用 ffmpeg 再试一次。",
-      "type": "boolean",
-      "default": "true"
+      "key": "adRulesMode",
+      "title": "去广告 · 模式",
+      "description": "下载前丢弃广告分片。只对本插件解析出来的任务生效。",
+      "type": "string",
+      "widget": "select",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭（默认）"
+        },
+        {
+          "value": "marker",
+          "label": "仅按广告标记（保守）"
+        },
+        {
+          "value": "heuristic",
+          "label": "标记 + 推测（激进）"
+        }
+      ],
+      "default": "off"
+    },
+    {
+      "key": "adRulesExtra",
+      "title": "去广告 · 自定义规则",
+      "description": "JSON，可留空。三个键 keepPath / dropPath / dropHosts，例 {\"dropPath\":[\"/ads/\",\"/preroll/\"]}。一般留空，模式选「标记 + 推测」即可。",
+      "type": "string",
+      "widget": "textarea",
+      "default": ""
     }
   ]
 }

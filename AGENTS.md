@@ -72,7 +72,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 
 1. 不得删除 / 跳过 / 弱化测试（含 `skip`、注释掉断言、放宽比较），不得伪造「测试已通过」。
 2. `tests/legacy/` 是 v1.8.0 冻结基线，**不得修改**。有意改变的行为进 `contract` / `intercept` / `postprocess`，不得靠改基线或删 `diverges` 声明抹平 parity 差异。
-3. SDK 运行时只允许一处：`main.tsx` 的 JSX 运行时（`sdk/ui/jsx-runtime`，随 `dist/main.js` 分发，AGPL 义务登记在 `THIRD-PARTY.md`，见 ADR-0005）。其余 SDK 导出一律 `import type`，不得再引入 `defineMain` 等其他运行时导出，也不得把它扩到别的入口。
+3. 产物零 SDK 运行时：SDK 导出一律 `import type`，不得引入 `sdk/ui/jsx-runtime`、`defineMain` 等任何运行时导出（历史例外已随视图删除解除，见 ADR-0009；`tests/ui.mjs` 有产物级断言）。
 4. 不得更换 `identity`（`m3u8-resolver@cocolight`）——换了即视为另一个插件，用户设置与凭据全部丢失。
 5. 大改动先确认：单次改动 > 5 个文件 或 > 200 行，先给方案，等确认再动手。
 6. 不得擅自 `git commit` / `push` / `push --tags` / `tag` / `rebase` / `reset` / `--force`、创建 Release、切分支或改远程；仅在明确要求时执行。

@@ -23,14 +23,16 @@
 
 ## 加一个视图 / 设置页签
 
+> 当前**没有**视图：3.0.0 起设置面 = 宿主从 `manifest.settings[]` 自动生成的表单（ADR-0009）。
+> 重新引入视图是结构性决定，先读 ADR-0009 的「后果」三条（嵌套页签、两套真相、AGPL 面积）再动手。
+
 1. `manifest.json` 的 `contributes.views` 加一项：`id` 匹配 `^[a-z][a-z0-9-]{0,31}$`，`title` 1–40 字符，`location` 取 `settings` / `activity` / `taskDetail` / `window` / `auth`。`settings` 与 `auth` **各至多一个**。
-2. 没有 `desktop` 字段的视图恒为可移植视图，要求声明 `main`；Web 端只显示这类视图。**不要**为了界面顺手加 `desktop` —— 那会把风险等级拉到「完全」并要求 `desktop` 权限。
-3. `src/entry/main.tsx` 用 `flux.ui.view(id, { init, render, event })` 注册，`id` 必须与声明完全一致（漏了客户端会报 `view not registered`）。
-4. 渲染树用 JSX 写，编译到 `sdk/ui/jsx-runtime`（理由与授权边界见 ADR-0005、`THIRD-PARTY.md`）。入口后缀必须是 `.tsx`，tsconfig 的 `jsx` / `jsxImportSource` 与 SDK 写死的 esbuild 选项一致；不加新文件就不用动这两处。
+2. 没有 `desktop` 字段的视图恒为可移植视图，要求声明 `main` 入口；Web 端只显示这类视图。**不要**为了界面顺手加 `desktop` —— 那会把风险等级拉到「完全」并要求 `desktop` 权限。
+3. `src/entry/main.ts` 用 `flux.ui.view(id, { init, render, event })` 注册，`id` 必须与声明完全一致（漏了客户端会报 `view not registered`）。
+4. 渲染树用 `flux.ui.h` 手写（ADR-0004 的实现路线）。红线 #3 是**产物零 SDK 运行时**：`sdk/ui/jsx-runtime` 的例外已随 ADR-0009 解除，要回到 JSX 须先新增 ADR 再改红线。
 5. 受控输入必须把 `change` 的值写回 `state`，否则输入框会弹回。事件按节点 id 的**最后一段**分发，并为每个可交互节点、每个条件出现的节点加 `key`（同级不得重名）。
-6. `location: "settings"` 是**新增**一个「插件设置」页签，与自动生成的「基础设置」页签并存 —— 不需要复刻已有设置项，只做基础表单做不到的事。
-7. `tests/ui.mjs` 补断言：声明与注册一致、渲染树通过 schema 校验、受控输入、保存语义。新增 `kind` 时同步该文件的 `KINDS` 白名单与 `STRING_PROPS`。
-8. 视图里不做网络请求与长循环：`main` 的所有视图、命令、事件共用一个虚拟机且**串行执行**，单次调用上限 30 秒墙钟 / 2 秒 CPU / 64 MB。
+6. `location: "settings"` 是**新增**一个「插件设置」页签，与自动生成的「基础设置」页签并存，对话框变成两层 —— 这正是 0009 删视图的原因。能进 `manifest.settings[]` 的配置别放视图。
+7. `tests/ui.mjs` 现在只测设置表单的声明契约；视图断言（树 schema、受控输入、保存语义）需随视图重建。
 
 ## 加一个拦截阶段
 

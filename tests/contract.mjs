@@ -313,6 +313,18 @@ const PAGE = `<!doctype html>
     existsSync(join(DIST, "auth.js")) ? "dist/auth.js 仍在" : true);
 }
 
+// ---------------------------------------------------------------------------
+// 12. 自定义视图已移除（设置面 = 宿主自动生成的表单，见 ADR-0009）
+// ---------------------------------------------------------------------------
+{
+  const m = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
+  check("设置面：manifest 不再声明 main 入口", () => (m.main === undefined ? true : `仍声明 ${show(m.main)}`));
+  check("设置面：manifest 不再声明 contributes.views", () =>
+    (m.contributes === undefined ? true : `仍声明 ${show(m.contributes)}`));
+  check("设置面：产物里没有 main.js", () =>
+    existsSync(join(DIST, "main.js")) ? "dist/main.js 仍在" : true);
+}
+
 console.log(`\n${pass}/${pass + fail} 项契约通过`);
 if (fail) {
   console.error(`\n${fail} 项契约未通过 —— 请求面行为不符合预期。`);
