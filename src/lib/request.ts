@@ -2,7 +2,7 @@ import type { OriginHeaders, RequestPatch, ResolveResult } from "fluxdown-plugin
 import type { Env } from "./env";
 import { customHeaders, refererValue } from "./http";
 import { parseUrl, safeOrigin } from "./url";
-import { base64Utf8 } from "./base64";
+import { parseCredential } from "./credential";
 
 /**
  * 请求面：把「抓取清单/分片时要带什么」表达成 `ResolveResult.request`（`RequestPatch`）。
@@ -55,52 +55,36 @@ function takeCI(h: Record<string, string>, name: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * 档案 → 请求头（与宿主 `AuthProfile::apply_to_headers` 同序：Cookie / Bearer / Basic 只取其一，
- * 档案自带的 headers 最后覆盖同名）。
+ * 凭据 → 请求头。
  *
- * 站点键与宿主 `auth::site_key` 同口径（`{scheme}://{host}[:port]`）。这里保留 v1.8.0 的同源闸：
- * 目标与登记站点不同源时**整条不注入**并记日志 —— `originHeaders` 由引擎再兜一层，但显式拒绝
- * 比交给引擎更早给出可诊断的线索（用户看到日志就知道「不是插件没实现，是站点对不上」）。
+ * 来源只有一处：设置项 `authCookie`（解析见 `lib/credential.ts`）。v2.x 早期这条链路是
+ * `ctx.authRef → flux.auth.get()`，靠宿主的按站点登录对话框写入档案；那个模型与
+ * 「站点无关的全通配解析器」不匹配，已随登录入口一并去掉。
+ *
+ * 归属站点取**任务自身 URL**（`ctx.url`）的 origin —— 用户粘贴的就是要下载的地址，
+ * 它的 origin 天然是凭据该去的地方。目标与它不同源时**整条不注入**并记日志：
+ * 清单在站内、分片在 CDN 的常见形态下，Cookie 不会跟着发给 CDN。
  */
-async function credentialOrigin(env: Env, targetUrl: string): Promise<OriginHeaders | null> {
-  const authRef = env.ctx.authRef ? String(env.ctx.authRef) : "";
-  if (!authRef) return null;
-  if (!flux.auth || typeof flux.auth.get !== "function") return null; // 未授予 auth 权限
+function credentialOrigin(env: Env, targetUrl: string): OriginHeaders | null {
+  const raw = env.s.authCookie.trim();
+  if (!raw) return null;
 
-  let p: Record<string, unknown> | null = null;
-  try {
-    p = (await flux.auth.get(authRef)) as Record<string, unknown> | null;
-  } catch (e) {
-    flux.logger.warn("[m3u8-resolver] 读取认证凭据失败，本次不带凭据:", String(e));
-    return null;
-  }
-  if (!p || typeof p !== "object") return null;
-
-  const site = String(p.site || "");
+  const site = safeOrigin(env.ctx.url);
   const target = parseUrl(targetUrl);
   const key = target ? target.origin : "";
   if (!site || !key || site !== key) {
-    // 跨站点不注入（含 CDN 主机）。确需跨主机带凭据者用 extraHeadersRaw 手工指定 ——
-    // 那条路径是用户显式声明，不参与这道同源检查。
     flux.logger.info(
-      "[m3u8-resolver] 认证凭据站点 " + (site || "(空)") + " 与下载目标 " + (key || targetUrl) + " 不同源，未注入",
+      "[m3u8-resolver] 登录凭据归属站点 " +
+        (site || "(任务地址无 origin)") +
+        " 与下载目标 " +
+        (key || targetUrl) +
+        " 不同源，未注入",
     );
     return null;
   }
 
-  const headers: Record<string, string> = {};
-  if (p.cookies) headers["Cookie"] = String(p.cookies);
-  if (p.accessToken) headers["Authorization"] = "Bearer " + String(p.accessToken);
-  if (String(p.kind || "").toLowerCase() === "basic" && (p.username || p.password)) {
-    headers["Authorization"] = "Basic " + base64Utf8(String(p.username || "") + ":" + String(p.password || ""));
-  }
-  if (p.headers && typeof p.headers === "object") {
-    const extra = p.headers as Record<string, unknown>;
-    for (const k in extra) {
-      if (Object.prototype.hasOwnProperty.call(extra, k)) headers[k] = String(extra[k]);
-    }
-  }
-  return { origin: site, headers };
+  const cred = parseCredential(raw, site);
+  return cred ? { origin: cred.origin, headers: cred.headers } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +130,7 @@ export async function requestPatch(env: Env, targetUrl: string): Promise<Request
   if (origin) merged["Origin"] = origin;
 
   // 5) 凭据：同源才注入，且不覆盖用户显式写的同名头
-  const cred = await credentialOrigin(env, targetUrl);
+  const cred = credentialOrigin(env, targetUrl);
   if (cred) {
     const keep: Record<string, string> = {};
     for (const k in cred.headers) {

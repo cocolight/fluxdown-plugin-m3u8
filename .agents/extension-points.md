@@ -16,7 +16,7 @@
 
 1. `src/entry/<name>.ts` 实现对应全局函数，宿主契约见 `fluxdown-plugin-sdk` 的类型。
 2. `fluxdown-plugin.config.json` 的 `entries` 加 `"<name>.js": "src/entry/<name>.ts"`。
-3. `manifest.json` 在对应段（`resolvers` / `hooks` / `auth` / `subscriptions` / `interceptors` / `main`）指向该文件。
+3. `manifest.json` 在对应段（`resolvers` / `hooks` / `subscriptions` / `interceptors` / `main`）指向该文件。
 4. 需要新权限时同步 `permissions[]` —— 引擎对已批准权限做**精确匹配**，新权限未批准时插件装上但停用，README 的升级说明要提这一条。
 5. 新入口是独立 QuickJS 上下文：不得在运行时引用其他入口的导出。
 6. `npm run build && npm run validate` 必须通过；产物数量变化时更新 README「文件结构」。

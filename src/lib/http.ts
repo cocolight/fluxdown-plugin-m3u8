@@ -3,6 +3,7 @@ import type { Settings } from "./settings";
 import type { Env } from "./env";
 import { RESOLVE_FETCH_CAP } from "./env";
 import { absUrl, hostKey, safeOrigin } from "./url";
+import { parseCredential } from "./credential";
 import { extractDash, extractMaster } from "./discovery";
 import { IFRAME_SRC_RE, PLAYER_LINK_RE } from "./patterns";
 
@@ -50,8 +51,12 @@ export function customHeaders(s: Settings): Record<string, string> {
 }
 
 /**
- * 给 flux.fetch 用：Referer + UA + 自定义头。
+ * 给 flux.fetch 用：Referer + UA + 自定义头 + 登录凭据。
  * manifest / 分片 URL 的抓取也必须带头，否则站方返回的是登录页而非 playlist。
+ *
+ * 凭据来自设置项 `authCookie`，且**只发给与任务 URL 同源的地址** —— 与下载补丁的
+ * `originHeaders` 同一条闸（见 `lib/request.ts`）。清单在站内、分片在 CDN 时，
+ * 抓 CDN 的那次不会带上 Cookie。
  */
 export function fetchHeaders(env: Env, referer: string, targetUrl?: string): Record<string, string> {
   const h = customHeaders(env.s);
@@ -59,8 +64,34 @@ export function fetchHeaders(env: Env, referer: string, targetUrl?: string): Rec
   if (targetUrl) {
     const ck = env.rc.cookies[hostKey(targetUrl)];
     if (ck) h["Cookie"] = mergeCookie(h["Cookie"], ck);
+
+    const cred = credentialFor(env, targetUrl);
+    if (cred) {
+      for (const k in cred) {
+        if (Object.prototype.hasOwnProperty.call(cred, k) && !hasHeaderCI(h, k)) h[k] = cred[k];
+      }
+    }
   }
   return h;
+}
+
+/** 凭据头：仅当目标与任务 URL 同源时返回，否则 null。 */
+export function credentialFor(env: Env, targetUrl: string): Record<string, string> | null {
+  const raw = env.s.authCookie.trim();
+  if (!raw) return null;
+  const site = safeOrigin(env.ctx.url);
+  const target = safeOrigin(targetUrl);
+  if (!site || !target || site !== target) return null;
+  const cred = parseCredential(raw, site);
+  return cred ? cred.headers : null;
+}
+
+function hasHeaderCI(h: Record<string, string>, name: string): boolean {
+  const want = name.toLowerCase();
+  for (const k in h) {
+    if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === want) return true;
+  }
+  return false;
 }
 
 /** 合并两个 Cookie 串：按 name 去重（后者覆盖），分号拼接。任一为空则返回另一个。 */

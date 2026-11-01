@@ -723,5 +723,6 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 }
 ```
 
-（`settings` 其余 22 项原样保留；上表只列出新增项。`interceptors.match.urls` 虽为 `*://*/*`，实际处置
+（**v3.0.0 起本骨架里的 `auth` 段已删除**，凭据改由 `authCookie` 直供，见 ADR-0006；
+`settings` 其余项原样保留；上表只列出新增项。`interceptors.match.urls` 虽为 `*://*/*`，实际处置
 由 `intercept()` 首行的"协议 + 任务标记"双重 fail-closed 决定，理由见 §6.6。）

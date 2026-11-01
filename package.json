@@ -1,6 +1,6 @@
 {
   "name": "fluxdown-plugin-m3u8",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "description": "FluxDown M3U8 发现与变体解析器（TypeScript + plugin SDK 构建）",

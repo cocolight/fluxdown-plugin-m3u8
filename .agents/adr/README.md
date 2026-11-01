@@ -18,3 +18,4 @@
 | [0003](0003-sdk-type-only-import.md) | SDK 仅以 `import type` 引用 | 已接受（0005 修订） |
 | [0004](0004-no-sdk-jsx-runtime.md) | 视图层不用 SDK 的 JSX 运行时，改用 `flux.ui.h` | 已被 0005 取代 |
 | [0005](0005-allow-sdk-jsx-runtime.md) | 允许 SDK 的 JSX 运行时进入产物，义务登记在 THIRD-PARTY | 已接受 |
+| [0006](0006-drop-auth-entry.md) | 移除登录入口，凭据改由设置项 `authCookie` 直供 | 已接受 |

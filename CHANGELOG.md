@@ -7,14 +7,21 @@
 > 在条目末尾用「（理由：…）」附**一句话**，多数条目不带理由；不写破折号插入语与推导叙事。
 > 小决策的留痕在此，重大决策走 `.agents/adr/`。
 >
-> 2.0.0 – 2.3.0 四节已完成并提交，尚未打 tag 发版，日期标「未发布」；发版时替换为实际日期。
+> 2.0.0 – 3.0.0 各节已完成并提交，尚未打 tag 发版，日期标「未发布」；发版时替换为实际日期。
+> 原计划的 2.3.0（设置页签）从未发布，已并入 3.0.0 —— 3.0.0 移除登录入口属 breaking，故一并升大版本。
 
 ## [Unreleased]
 
-## [2.3.0] - 未发布
+## [3.0.0] - 未发布
+
+### Removed
+
+- 移除登录入口：删掉 `auth` 段与 `auth` 权限，产物入口由 6 个降为 5 个（理由：登录对话框按站点登录，与对所有站点生效的定位冲突，见 ADR-0006）
+- 删除 `src/entry/auth.ts`；`tests/parity` 中 13 条 `auth` 场景随功能删除，改由 `tests/contract` 断言「已移除」
 
 ### Added
 
+- 新增 `src/lib/credential.ts`：凭据文本解析（bearer / basic / 多行头 / Cookie），补丁与抓取两处共用
 - 新增设置页签「去广告规则」（`main.tsx` + `contributes.views`）：模式切换、规则即时校验、五档预设
 - 新增 `src/lib/rulecheck.ts`：界面侧规则校验，与拦截器共用 `parseAdRuleSet`，不另写一套判定
 - 新增 `src/lib/adpresets.ts`：从保守到激进的五档规则形态，不内置任何站点域名名单
@@ -28,6 +35,7 @@
 
 ### Changed
 
+- 登录凭据改由设置项 `authCookie` 直供：下载补丁走 `originHeaders`、抓取走 `fetchHeaders`，同源闸不变
 - 测试链路由四层扩为五层，`npm test` 增加 `ui`；`main` 视图的 schema 与交互从此有断言
 - CI 由 `ci.yml` 改为 `build.yml`，新增 CHANGELOG 门禁与发版守卫两个 job
 - 工程文档从 `docs/` 迁到 `.agents/`，`docs/` 只保留使用者文档（理由：两类读者不该共用一处）

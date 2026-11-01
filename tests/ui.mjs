@@ -14,7 +14,7 @@
  *
  * 用法：npm run ui          （需先 npm run build）
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runEntry, show } from "./parity/harness.mjs";
@@ -585,7 +585,10 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
     const marker = "#fragment";
     const mainSrc = readFileSync(join(DIST, "main.js"), "utf8");
     if (!mainSrc.includes(marker)) return "main.js 里找不到 jsx 运行时，视图会在运行时崩";
-    const others = ["resolver.js", "hooks.js", "auth.js", "subscribe.js", "intercept.js"];
+    // 入口清单从产物目录取，而不是硬编码：删/加入口时这条断言不该跟着改，
+    // 否则「忘了同步」会被误读成「没有泄漏」。
+    const others = readdirSync(DIST).filter((f) => f.endsWith(".js") && f !== "main.js");
+    if (!others.length) return "产物里没有其他入口，断言失去意义";
     const leaked = others.filter((f) => readFileSync(join(DIST, f), "utf8").includes(marker));
     return leaked.length === 0 ? true : `${leaked.join(", ")} 也内联了 jsx 运行时（ADR-0005 的例外不得扩大）`;
   });
