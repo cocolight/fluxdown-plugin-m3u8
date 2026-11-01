@@ -1,15 +1,22 @@
 /**
- * `main` 入口 —— 可移植设置页签。
+ * `main` 入口 —— 可移植设置页签「插件设置」。
  *
  * 定位：**给使用者看的设置页**。宿主的「基础设置」页签是把 manifest 的 `settings[]` 平铺成
- * 一长列表单 —— 27 项、近 3000 字说明，对普通用户就是一堵墙；而且引擎的 `SettingField`
- * 是 `deny_unknown_fields`，**没有 group / advanced 字段**，所以那种平铺在宿主侧无法折叠、
- * 无法分组。这里做的就是把「一堵墙」变成「两层」：
+ * 一长列表单 —— 27 项、几百字说明，对普通用户就是一堵墙；而且引擎的 `SettingField`
+ * 是 `deny_unknown_fields`，**没有 group / advanced 字段**，那种平铺在宿主侧无法折叠、
+ * 无法分组。所以分区只能在插件自己的视图里做。
  *
- *   - **常用（默认）**：用户真会改的十来项，按场景分组，每项一句话说明。
- *   - **专业（开关打开后）**：站点适配、剧集识别、编码音轨、下载行为等调参项。
+ * 三个页签，按「用户想干什么」切分，而不是按代码模块：
  *
- * 三条实现纪律：
+ *   - **基础设置**：只有开关。打开/关掉就完成的事，不需要输任何东西。
+ *   - **参数设置**：需要填值或选项的项 —— 画质、命名、登录、站点适配、剧集、编码、Range。
+ *   - **去广告设置**：模式、预设、规则文本与即时校验（这一组有连带关系，单独一页）。
+ *
+ * 用 `tabs` 节点只画标签条（`children?: never`），内容由 `state.tab` 决定渲染哪一组 ——
+ * 这是官方文档给的用法（「`tabs` 只绘制标签条，所选 `value` 对应的内容由你自己渲染」）。
+ * 页签选择**只存视图 state**，不写进设置：它是一次会话里的浏览位置，不是配置。
+ *
+ * 四条实现纪律：
  *   - **JSX 用 SDK 的 `ui/jsx-runtime`**：该运行时会被 esbuild 内联进 `dist/main.js`，属
  *     AGPL-3.0-or-later 代码随产物分发。这是**有意为之**，不是疏忽：授权义务登记在
  *     `THIRD-PARTY.md`，决策与代价见 `.agents/adr/0005-allow-sdk-jsx-runtime.md`。
@@ -17,13 +24,29 @@
  *     避免把用户在别处改的值覆盖回草稿。
  *   - **规则校验与拦截器同源**：`adRulesExtra` 一律走 `lib/rulecheck.ts`（内部再走 `adrules`），
  *     不在视图里另写判定，否则会出现「设置页说能生效、实际没生效」。
+ *   - **分页不丢草稿**：草稿在 state 里，切页签不重建 —— 否则跨页签改多项再保存会只剩最后一页。
  */
 
 import type { MainFlux, Tone, ViewEvent } from "fluxdown-plugin-sdk";
 import { AD_PRESETS, findPreset } from "../lib/adpresets";
 import { checkAdRules, summarizeRuleCount } from "../lib/rulecheck";
 
+/**
+ * 视图 id 仍是 `ad-rules`：它最初只放去广告规则，现在承载三页设置，名字已不完全贴切。
+ * 不改是因为宿主可能按 id 记视图状态，改名只换来美观，代价是可能重置用户那边的记录。
+ */
 const VIEW_ID = "ad-rules";
+
+/** 页签。顺序即界面顺序；`value` 只在本文件内使用，不落库。 */
+const TABS = [
+  { value: "basic", label: "基础设置" },
+  { value: "params", label: "参数设置" },
+  { value: "ads", label: "去广告设置" },
+];
+const TAB_VALUES = TABS.map((t) => t.value);
+const TAB_BASIC = "basic";
+const TAB_PARAMS = "params";
+const TAB_ADS = "ads";
 
 /** 与 manifest `settings[adRulesMode].options` 保持一致；值不在其中时一律按 off 处理。 */
 const MODES = ["off", "marker", "heuristic"];
@@ -70,23 +93,53 @@ interface Field {
 interface Group {
   id: string;
   title: string;
-  /** 专业设置才显示的分组。 */
-  expert?: boolean;
   fields: Field[];
 }
 
 /**
- * 设置项清单（视图侧元数据）。`key` 必须与 manifest 的 `settings[].key` 一一对应 ——
- * 写错一个键，用户在页面上改完保存会收到宿主的「未知设置项」错误（原文透传，不吞）。
+ * 基础设置：**只有开关**。判据是「关掉/打开就完事」—— 任何要输值、选档位的项都不在这里，
+ * 一律进参数设置。这条分界要能一句话说清，否则用户找不到东西。
  */
-const GROUPS: Group[] = [
+const BASIC_GROUPS: Group[] = [
   {
-    id: "quality",
+    id: "parse",
+    title: "解析行为",
+    fields: [
+      { key: "solveChallenge", label: "自动过「安全检查」页", type: "switch", hint: "遇到防抓页时解出 Cookie 并重试一次" },
+      { key: "followIframe", label: "跟随内嵌播放器", type: "switch", hint: "页面里没有 m3u8 时跟进 iframe 再找" },
+      { key: "detectDash", label: "识别 DASH 清单", type: "switch", hint: "页面只给 .mpd 时也能发现" },
+      { key: "htmlFallbackYtdlp", label: "抓到网页时用 yt-dlp 兜底", type: "switch", hint: "返回 HTML 而非播放列表时改用 yt-dlp 重抽直链" },
+    ],
+  },
+  {
+    id: "series-audio",
+    title: "剧集与音轨",
+    fields: [
+      { key: "detectSeries", label: "识别剧集页", type: "switch", hint: "命中时弹选集框；条数阈值在参数设置里" },
+      { key: "audioOnly", label: "只要音频", type: "switch", hint: "跳过视频，只下音轨" },
+    ],
+  },
+  {
+    id: "pick-download",
+    title: "画质与下载",
+    fields: [
+      { key: "autoPick", label: "自动选最高画质", type: "switch", hint: "关掉后每次下载前弹窗让你自己挑" },
+      { key: "remuxToMp4", label: "转成 MP4", type: "switch", hint: "容器不标准时无损转封装，多花一点时间" },
+      { key: "useYtdlp", label: "复杂站点交给 yt-dlp", type: "switch", hint: "内置解析抓不到时改用 yt-dlp 重试，需已安装该组件" },
+      { key: "ephemeral", label: "一次性签名链接", type: "switch", hint: "跳过元数据探测直接下载，适合会过期的直链" },
+      { key: "fixMuxFallback", label: "合并失败时插件兜底", type: "switch", hint: "音视频分轨下载后合并失败，用 ffmpeg 再试一次" },
+    ],
+  },
+];
+
+/** 参数设置：需要填值或选档位的项。按「改它的时候你在想什么」分组。 */
+const PARAM_GROUPS: Group[] = [
+  {
+    id: "quality-name",
     title: "画质与命名",
     fields: [
       { key: "preferResolution", label: "画质", type: "select", options: RESOLUTION_OPTIONS },
-      { key: "autoPick", label: "自动选最高画质", type: "switch", hint: "关掉后每次下载前弹窗让你自己挑" },
-      { key: "nameTemplate", label: "文件命名", type: "text", hint: "留空 = 「标题-清晰度」；支持 {title} {author} {quality} 等占位" },
+      { key: "nameTemplate", label: "文件命名", type: "text", hint: "支持 {title} {author} {quality} 等占位符" },
     ],
   },
   {
@@ -109,63 +162,37 @@ const GROUPS: Group[] = [
     title: "音轨",
     fields: [
       { key: "separateAudio", label: "独立音轨", type: "select", options: SEPARATE_OPTIONS },
-      { key: "audioOnly", label: "只要音频", type: "switch", hint: "跳过视频，只下音轨" },
-    ],
-  },
-  {
-    id: "post",
-    title: "下载后处理",
-    fields: [
-      { key: "remuxToMp4", label: "转成 MP4", type: "switch", hint: "容器不标准时无损转封装，多花一点时间" },
-      { key: "useYtdlp", label: "复杂站点交给 yt-dlp", type: "switch", hint: "内置解析抓不到时改用 yt-dlp 重试，需已安装该组件" },
+      { key: "audioLang", label: "音轨语言", type: "text", hint: "留空不限，例如 chi / jpn" },
     ],
   },
   {
     id: "hosts",
     title: "站点适配",
-    expert: true,
     fields: [
       { key: "targetHosts", label: "只在这些站点生效", type: "text", hint: "逗号分隔的主机名；留空 = 对所有站点生效" },
-      { key: "solveChallenge", label: "自动过「安全检查」页", type: "switch", hint: "遇到防抓页时解出 Cookie 并重试一次" },
-      { key: "followIframe", label: "跟随内嵌播放器", type: "switch", hint: "页面里没有 m3u8 时跟进 iframe 再找" },
       { key: "iframeMaxFollow", label: "内嵌最多跟进几层", type: "number", hint: "1–3，默认 1" },
-      { key: "detectDash", label: "识别 DASH 清单", type: "switch", hint: "页面只给 .mpd 时也能发现" },
-      { key: "htmlFallbackYtdlp", label: "抓到网页时用 yt-dlp 兜底", type: "switch" },
     ],
   },
   {
     id: "series",
     title: "剧集识别",
-    expert: true,
     fields: [
-      { key: "detectSeries", label: "识别剧集页", type: "switch", hint: "命中时弹选集框" },
       { key: "manifestMinItems", label: "判为剧集的最少条目", type: "number", hint: "低于此数不弹选集" },
       { key: "manifestMaxItems", label: "选集框最多列几条", type: "number" },
       { key: "episodeLinkPattern", label: "自定义剧集链接正则", type: "text", hint: "留空用内置规则" },
     ],
   },
   {
-    id: "codec",
-    title: "编码与音轨细节",
-    expert: true,
+    id: "codec-download",
+    title: "编码与传输",
     fields: [
       { key: "preferCodec", label: "编码偏好", type: "select", options: CODEC_OPTIONS },
-      { key: "audioLang", label: "音轨语言", type: "text", hint: "留空不限" },
-    ],
-  },
-  {
-    id: "download",
-    title: "下载行为",
-    expert: true,
-    fields: [
-      { key: "ephemeral", label: "一次性签名链接", type: "switch", hint: "跳过元数据探测，直接下" },
       { key: "rangeCapKb", label: "单次 Range 上限（KiB）", type: "number", hint: "0 = 不限制；低于 64 按关闭处理" },
-      { key: "fixMuxFallback", label: "合并失败时插件兜底", type: "switch", hint: "音视频分轨下载后合并失败，用 ffmpeg 再试一次" },
     ],
   },
 ];
 
-/** 去广告分组在页面上单独渲染（它有预设按钮与即时校验），其余分组走通用渲染。 */
+/** 去广告这一页的两个键。它在页面上单独渲染（有预设按钮与即时校验），不进上面的分组。 */
 const AD_GROUP_MODE = "adRulesMode";
 const AD_GROUP_EXTRA = "adRulesExtra";
 
@@ -179,8 +206,8 @@ interface State {
   draft: Record<string, string>;
   /** 已保存的快照，用于判断脏值与「还原」。 */
   saved: Record<string, string>;
-  /** 视图自己的展开状态，不进设置。 */
-  expertOpen: boolean;
+  /** 当前页签。视图自己的浏览状态，不写进设置。 */
+  tab: string;
   notice: Notice | null;
 }
 
@@ -200,6 +227,12 @@ function normMode(v: unknown): string {
   return MODES.indexOf(s) >= 0 ? s : "off";
 }
 
+/** 未知页签一律回基础设置：宁可回到第一页，也不要渲染出一片空白。 */
+function normTab(v: unknown): string {
+  const s = str(v).trim();
+  return TAB_VALUES.indexOf(s) >= 0 ? s : TAB_BASIC;
+}
+
 function errText(e: unknown): string {
   return String((e && (e as Error).message) || e);
 }
@@ -211,8 +244,10 @@ function keyOf(ev: ViewEvent): string {
   return i < 0 ? s : s.slice(i + 1);
 }
 
-/** 所有需要进草稿的键：manifest 里除 expertMode 之外的 26 项 + expertMode 自己。 */
-const ALL_FIELDS: Field[] = GROUPS.reduce<Field[]>((acc, g) => acc.concat(g.fields), []);
+/** 进草稿的全部键：基础 + 参数 + 去广告两个。必须覆盖 manifest 的每一项。 */
+const ALL_FIELDS: Field[] = BASIC_GROUPS.reduce<Field[]>((acc, g) => acc.concat(g.fields), []).concat(
+  PARAM_GROUPS.reduce<Field[]>((acc, g) => acc.concat(g.fields), []),
+);
 
 function readDraft(settings: Record<string, unknown>): Record<string, string> {
   const d: Record<string, string> = {};
@@ -221,7 +256,6 @@ function readDraft(settings: Record<string, unknown>): Record<string, string> {
   }
   d[AD_GROUP_MODE] = normMode(settings[AD_GROUP_MODE]);
   d[AD_GROUP_EXTRA] = str(settings[AD_GROUP_EXTRA]);
-  d.expertMode = boolStr(settings.expertMode);
   return d;
 }
 
@@ -275,7 +309,7 @@ function register(flux: MainFlux): void {
   flux.ui.view<State>(VIEW_ID, {
     init: (): State => {
       const draft = readDraft(flux.settings as unknown as Record<string, unknown>);
-      return { draft, saved: { ...draft }, expertOpen: draft.expertMode === "true", notice: null };
+      return { draft, saved: { ...draft }, tab: TAB_BASIC, notice: null };
     },
 
     render: (state: State) => {
@@ -283,7 +317,7 @@ function register(flux: MainFlux): void {
       const ruleCount = summarizeRuleCount(check);
       const dirtyKeys = Object.keys(state.draft).filter((k) => state.draft[k] !== state.saved[k]);
       const dirty = dirtyKeys.length > 0;
-      const expert = state.expertOpen;
+      const tab = normTab(state.tab);
 
       const drawField = (f: Field) => {
         const v = state.draft[f.key];
@@ -317,82 +351,78 @@ function register(flux: MainFlux): void {
         );
       };
 
-      const groups = GROUPS.filter((g) => expert || !g.expert).map((g) => (
+      const drawGroup = (g: Group) => (
         <section key={"g-" + g.id} title={g.title}>
           {g.fields.map(drawField)}
         </section>
-      ));
+      );
 
-      const expertCount = GROUPS.filter((g) => g.expert).reduce((n, g) => n + g.fields.length, 0);
+      const basicPane = (
+        <stack key="pane-basic" gap="md">
+          <text text="开关类设置：打开或关掉即可，不需要填任何内容。" tone="muted" size="sm" />
+          {BASIC_GROUPS.map(drawGroup)}
+        </stack>
+      );
+
+      const paramsPane = (
+        <stack key="pane-params" gap="md">
+          <text text="需要填值或选档位的设置。留空的项大多表示「用内置默认」。数字类填 0 通常表示不限制。" tone="muted" size="sm" />
+          {PARAM_GROUPS.map(drawGroup)}
+        </stack>
+      );
+
+      const adsPane = (
+        <stack key="pane-ads" gap="md">
+          <text text="下载前丢弃播放列表里的广告分片，只对本插件解析出来的任务生效。" tone="muted" size="sm" />
+
+          <stack key="ad-mode" gap="xs">
+            <text text="模式" size="sm" />
+            <select key={AD_GROUP_MODE} options={MODE_OPTIONS} value={state.draft[AD_GROUP_MODE]} />
+            <text text={"当前：" + ruleCount} tone="muted" size="xs" />
+          </stack>
+          {state.draft[AD_GROUP_MODE] === "off" ? (
+            <callout key="off-tip" tone="neutral" text="已关闭：下载时不丢弃任何分片，下面的规则也不会生效。" />
+          ) : null}
+
+          <text text="预设（点一下套用到下方草稿，仍需保存）" size="sm" />
+          <stack key="presets" gap="xs">
+            {AD_PRESETS.map((p) => (
+              <stack key={"preset-" + p.id} direction="row" gap="sm" align="center">
+                <button key={"apply-" + p.id} text={p.label} variant="outline" />
+                <text text={p.note} tone="muted" size="xs" />
+              </stack>
+            ))}
+          </stack>
+
+          <stack key="ad-extra" gap="xs">
+            <text text="自定义规则（JSON，可留空）" size="sm" />
+            <textarea key={AD_GROUP_EXTRA} value={state.draft[AD_GROUP_EXTRA]} rows={6} placeholder={'{ "dropPath": ["/ads/"] }'} />
+            <text
+              text="三个可选键：keepPath（白名单，命中永不丢弃）、dropPath（黑名单，命中即丢）、dropHosts（广告分片主机名）。"
+              tone="muted"
+              size="xs"
+            />
+          </stack>
+
+          {check.blocked ? (
+            <callout key="rule-error" tone="danger" title="这段规则不能保存" text={check.blocked} />
+          ) : null}
+          {!check.blocked && check.warning ? (
+            <callout key="rule-warn" tone="warning" title="部分规则不会生效" text={check.warning} />
+          ) : null}
+          {!check.blocked && !check.warning && str(state.draft[AD_GROUP_EXTRA]).trim() ? (
+            <callout key="rule-ok" tone="success" text={"规则解析通过：" + ruleCount} />
+          ) : null}
+        </stack>
+      );
+
+      const pane = tab === TAB_PARAMS ? paramsPane : tab === TAB_ADS ? adsPane : basicPane;
 
       return (
         <stack gap="md" padding="md">
           <heading text="插件设置" level={2} />
-          <text
-            text="下面只列常用的几项。本站适配、剧集识别、编码音轨这些调参项默认收起，需要时再打开「专业设置」。与「基础设置」页签里的项等价，改一处即可。"
-            tone="muted"
-            size="sm"
-          />
-
-          {groups}
-
-          <section key="g-ad" title="去广告">
-            <stack key="ad-mode" gap="xs">
-              <text text="模式" size="sm" />
-              <select key={AD_GROUP_MODE} options={MODE_OPTIONS} value={state.draft[AD_GROUP_MODE]} />
-              <text text={"当前：" + ruleCount} tone="muted" size="xs" />
-            </stack>
-            {state.draft[AD_GROUP_MODE] === "off" ? (
-              <callout
-                key="off-tip"
-                tone="neutral"
-                text="已关闭：下载时不丢弃任何分片，下面的规则也不会生效。"
-              />
-            ) : null}
-
-            <text text="预设（点一下套用到下方草稿，仍需保存）" size="sm" />
-            <stack key="presets" gap="xs">
-              {AD_PRESETS.map((p) => (
-                <stack key={"preset-" + p.id} direction="row" gap="sm" align="center">
-                  <button key={"apply-" + p.id} text={p.label} variant="outline" />
-                  <text text={p.note} tone="muted" size="xs" />
-                </stack>
-              ))}
-            </stack>
-
-            <stack key="ad-extra" gap="xs">
-              <text text="自定义规则（JSON，可留空）" size="sm" />
-              <textarea key={AD_GROUP_EXTRA} value={state.draft[AD_GROUP_EXTRA]} rows={6} placeholder={'{ "dropPath": ["/ads/"] }'} />
-              <text
-                text="三个可选键：keepPath（白名单，命中永不丢弃）、dropPath（黑名单，命中即丢）、dropHosts（广告分片主机名）。"
-                tone="muted"
-                size="xs"
-              />
-            </stack>
-
-            {check.blocked ? (
-              <callout key="rule-error" tone="danger" title="这段规则不能保存" text={check.blocked} />
-            ) : null}
-            {!check.blocked && check.warning ? (
-              <callout key="rule-warn" tone="warning" title="部分规则不会生效" text={check.warning} />
-            ) : null}
-            {!check.blocked && !check.warning && str(state.draft[AD_GROUP_EXTRA]).trim() ? (
-              <callout key="rule-ok" tone="success" text={"规则解析通过：" + ruleCount} />
-            ) : null}
-          </section>
-
-          <section key="g-expert-toggle" title="专业设置">
-            <switch
-              key="expertMode"
-              label={"显示专业设置（另有 " + expertCount + " 项：站点适配、剧集识别、编码、下载行为）"}
-              checked={expert}
-            />
-            <text
-              text="默认关闭是为了让上面这一页能一次看完。改完这些项同样需要按「保存」。"
-              tone="muted"
-              size="xs"
-            />
-          </section>
+          <tabs key="tab" items={TABS} value={tab} />
+          {pane}
 
           <divider />
 
@@ -424,11 +454,9 @@ function register(flux: MainFlux): void {
       state.notice = null;
 
       if (ev.type === "change") {
-        if (key === "expertMode") {
-          // 开关既改草稿（跟着「保存」落库），也立刻展开/收起 —— 否则点了没反应要等保存。
-          const on = ev.value === true || ev.value === "true";
-          state.expertOpen = on;
-          state.draft.expertMode = on ? "true" : "false";
+        if (key === "tab") {
+          // 页签是受控的：不写回 state，下一帧就会弹回旧标签。
+          state.tab = normTab(ev.value);
           return;
         }
         if (key === AD_GROUP_MODE) {
@@ -453,7 +481,6 @@ function register(flux: MainFlux): void {
       }
       if (key === "reset") {
         state.draft = { ...state.saved };
-        state.expertOpen = state.saved.expertMode === "true";
         state.notice = { tone: "neutral", text: "已还原为上次保存的内容。" };
         return;
       }

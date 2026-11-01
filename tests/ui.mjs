@@ -198,6 +198,18 @@ async function openView(sc = {}) {
   return { ...r, def, ctx, state, tree, run };
 }
 
+/**
+ * 打开视图并切到指定页签。页签是受控的，所以这里也走一次真实 `change` 事件 ——
+ * 顺带验证「标签条把选中值写回 state」这条链路，而不是绕过它直接改 state。
+ */
+async function openOn(tab, sc = {}) {
+  const v = await openView(sc);
+  if (tab === "basic") return v;
+  v.tree = await v.run(change(v.tree, "tab", tab));
+  if (v.state.tab !== tab) throw new Error(`切页签失败：state.tab = ${show(v.state.tab)}`);
+  return v;
+}
+
 let pass = 0;
 let fail = 0;
 const failures = [];
@@ -283,7 +295,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
 // ---------------------------------------------------------------------------
 {
   await ck("渲染：首帧通过 schema 校验", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
     const p = checkTree(v.tree);
     return p.length ? p.join("；") : true;
   });
@@ -300,7 +312,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("渲染：三档模式选项齐全且 value 合法", async () => {
-    const v = await openView({ settings: { adRulesMode: "heuristic" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "heuristic" } });
     const sel = byKey(v.tree, "select", "adRulesMode");
     if (!sel) return "树里没有 adRulesMode 的 select";
     const values = sel.options.map((o) => o.value);
@@ -310,13 +322,13 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("渲染：设置值非法时回退 off（不让 select 出现不存在的 value）", async () => {
-    const v = await openView({ settings: { adRulesMode: "bogus" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "bogus" } });
     const sel = byKey(v.tree, "select", "adRulesMode");
     return sel && sel.value === "off" ? true : `value = ${show(sel && sel.value)}`;
   });
 
   await ck("渲染：节点数与深度在引擎限制内", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker" } });
     let n = 0;
     let maxDepth = 0;
     const walk = (node, d) => {
@@ -329,7 +341,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("渲染：每个预设都有按钮，且按钮 key 全局唯一", async () => {
-    const v = await openView();
+    const v = await openOn("ads");
     const buttons = [];
     const walk = (n) => {
       if (n.k === "button") buttons.push(n.p.key);
@@ -344,66 +356,122 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
 }
 
 // ---------------------------------------------------------------------------
-// 2b. 大众 / 专业两档
+// 2b. 三个页签：基础（只有开关）/ 参数（填值）/ 去广告
 // ---------------------------------------------------------------------------
 {
-  const hasPick = (tree, kind, key) => !!byKey(tree, kind, key);
+  const MANIFEST = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
+  const DECLARED = MANIFEST.settings.map((x) => x.key);
+  const NAMES = ["基础设置", "参数设置", "去广告设置"];
 
-  await ck("分档：默认只显示常用项，专业项不出现", async () => {
-    const v = await openView({ settings: { expertMode: false } });
-    const leaked = ["targetHosts", "episodeLinkPattern", "rangeCapKb", "preferCodec"].filter((k) =>
-      hasPick(v.tree, "input", k) || hasPick(v.tree, "select", k),
+  await ck("页签：三个标签齐全，默认停在「基础设置」", async () => {
+    const v = await openView();
+    const t = byKey(v.tree, "tabs", "tab");
+    if (!t) return "树里没有 tabs 节点";
+    const labels = t.items.map((i) => i.label);
+    if (eq(labels, NAMES, "标签文案") !== true) return eq(labels, NAMES, "标签文案");
+    return t.value === "basic" ? true : `默认停在第 ${show(t.value)} 个页签`;
+  });
+
+  await ck("页签：tabs 的 items 每项都有非空 value 与 label（引擎要求）", async () => {
+    const v = await openView();
+    const t = byKey(v.tree, "tabs", "tab");
+    const bad = t.items.filter((i) => typeof i.value !== "string" || !i.value || typeof i.label !== "string" || !i.label);
+    return bad.length === 0 ? true : `不合法：${show(bad)}`;
+  });
+
+  await ck("页签：基础设置里只有开关，没有任何输入/选择控件", async () => {
+    const v = await openView();
+    const others = ["input", "select", "textarea", "checkbox"].map((k) => controls(v.tree, k).length);
+    if (eq(others, [0, 0, 0, 0], "非开关控件数") !== true) return eq(others, [0, 0, 0, 0], "非开关控件数");
+    const sw = controls(v.tree, "switch");
+    return sw.length >= 8 ? true : `开关只有 ${sw.length} 个，基础页太空了`;
+  });
+
+  await ck("页签：参数类设置项一个都不出现在基础设置", async () => {
+    const v = await openView();
+    const leaked = ["preferResolution", "nameTemplate", "authCookie", "targetHosts", "rangeCapKb"].filter(
+      (k) => byKey(v.tree, "select", k) || byKey(v.tree, "input", k) || byKey(v.tree, "textarea", k),
     );
-    return leaked.length === 0 ? true : `专业项漏出来了：${show(leaked)}`;
+    return leaked.length === 0 ? true : `漏在基础页：${show(leaked)}`;
   });
 
-  await ck("分档：打开专业设置后专业项出现", async () => {
-    const v = await openView({ settings: { expertMode: true } });
-    const need = ["targetHosts", "episodeLinkPattern", "rangeCapKb"];
-    const missing = need.filter((k) => !hasPick(v.tree, "input", k));
-    return missing.length === 0 ? true : `仍缺：${show(missing)}`;
-  });
-
-  await ck("分档：开关本身在树里，且反映 expertMode", async () => {
-    const off = await openView({ settings: { expertMode: false } });
-    const on = await openView({ settings: { expertMode: true } });
-    const a = byKey(off.tree, "switch", "expertMode");
-    const b = byKey(on.tree, "switch", "expertMode");
-    return a && b && a.checked === false && b.checked === true
-      ? true
-      : `off=${show(a && a.checked)} on=${show(b && b.checked)}`;
-  });
-
-  await ck("分档：点开关立即展开，不等保存", async () => {
-    const v = await openView({ settings: { expertMode: false } });
-    const next = await v.run(change(v.tree, "expertMode", true));
-    if (!hasPick(next, "input", "targetHosts")) return "展开后仍看不到 targetHosts";
-    return v.state.draft.expertMode === "true" ? true : `草稿 expertMode=${show(v.state.draft.expertMode)}`;
-  });
-
-  await ck("分档：每个 select 的当前值都在自己的 options 里（防视图与 manifest 漂移）", async () => {
-    const v = await openView({ settings: { expertMode: true } });
-    // 空串表示这项没被赋值（真实宿主会按 manifest 的 default 填），不算漂移；
-    // 除此之外的值必须出现在视图硬编码的 options 里，否则保存后宿主会把它当非法值处理。
-    const bad = controls(v.tree, "select").filter(
-      (s) => s.value !== "" && s.options.map((o) => o.value).indexOf(s.value) < 0,
+  await ck("页签：切到参数设置后出现参数项，且不再渲染开关", async () => {
+    const v = await openOn("params");
+    const need = ["preferResolution", "nameTemplate", "authCookie", "targetHosts", "rangeCapKb"];
+    const missing = need.filter(
+      (k) => !byKey(v.tree, "select", k) && !byKey(v.tree, "input", k) && !byKey(v.tree, "textarea", k),
     );
-    return bad.length === 0 ? true : `值不在选项内：${show(bad.map((s) => [s.key, s.value]))}`;
+    if (missing.length) return `仍缺：${show(missing)}`;
+    const sw = controls(v.tree, "switch").length;
+    return sw === 0 ? true : `参数页还渲染了 ${sw} 个开关（开关属基础页）`;
   });
 
-  await ck("分档：专业项数量与 manifest 声明一致", async () => {
-    // 视图里硬编码了分组与 key，manifest 改键名而视图没跟上 ⇒ 用户改完保存收到「未知设置项」。
-    const manifest = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
-    const declared = manifest.settings.map((s) => s.key);
-    const v = await openView({ settings: { expertMode: true } });
-    const rendered = [
-      ...controls(v.tree, "input").map((c) => c.key),
-      ...controls(v.tree, "select").map((c) => c.key),
-      ...controls(v.tree, "textarea").map((c) => c.key),
-      ...controls(v.tree, "switch").map((c) => c.key),
+  await ck("页签：切到去广告设置后只有这一组（模式 / 规则 / 预设）", async () => {
+    const v = await openOn("ads");
+    const has = [
+      !!byKey(v.tree, "select", "adRulesMode"),
+      !!byKey(v.tree, "textarea", "adRulesExtra"),
+      controls(v.tree, "button").filter((b) => String(b.key).indexOf("apply-") === 0).length,
+      controls(v.tree, "switch").length,
+      controls(v.tree, "input").length,
     ];
-    const missing = declared.filter((k) => rendered.indexOf(k) < 0);
-    return missing.length === 0 ? true : `manifest 有、页面没有：${show(missing)}`;
+    return eq(has, [true, true, 5, 0, 0], "[模式, 规则, 预设数, 开关数, 输入框数]");
+  });
+
+  await ck("页签：受控 —— 选中值写回 state 且反映到下一帧", async () => {
+    const v = await openView();
+    const next = await v.run(change(v.tree, "tab", "ads"));
+    if (v.state.tab !== "ads") return `state.tab = ${show(v.state.tab)}`;
+    const t = byKey(next, "tabs", "tab");
+    return t && t.value === "ads" ? true : `下一帧 tabs.value = ${show(t && t.value)}`;
+  });
+
+  await ck("页签：未知页签值回到基础设置（不渲染空白页）", async () => {
+    const v = await openView();
+    const next = await v.run(change(v.tree, "tab", "nope"));
+    if (v.state.tab !== "basic") return `state.tab = ${show(v.state.tab)}`;
+    return controls(next, "switch").length > 0 ? true : "落在空页上了";
+  });
+
+  await ck("页签：切页签不丢草稿（跨页改多项后仍能一起保存）", async () => {
+    const v = await openOn("params");
+    await v.run(change(v.tree, "preferResolution", "720"));
+    const mid = await v.run(change(v.tree, "tab", "basic"));
+    if (v.state.draft.preferResolution !== "720") return `切页后草稿丢失：${show(v.state.draft.preferResolution)}`;
+    if (!textOf(mid).some((t) => /1 项未保存/.test(t))) return `未保存计数不对：${show(textOf(mid))}`;
+    const back = await v.run(change(mid, "tab", "params"));
+    const sel = byKey(back, "select", "preferResolution");
+    return sel && sel.value === "720" ? true : `回到参数页后 select.value = ${show(sel && sel.value)}`;
+  });
+
+  await ck("页签：三个页签合起来覆盖 manifest 的全部设置项", async () => {
+    // 视图里硬编码了全部 key（引擎没有分组字段，不能靠 manifest 驱动）。改名不同步 ⇒
+    // 用户改完保存会收到「未知设置项」，所以这里把「页面 vs manifest」钉死。
+    const rendered = [];
+    for (const tab of ["basic", "params", "ads"]) {
+      const v = await openOn(tab);
+      for (const kind of ["switch", "select", "input", "textarea"]) {
+        rendered.push(...controls(v.tree, kind).map((c) => c.key));
+      }
+    }
+    const missing = DECLARED.filter((k) => rendered.indexOf(k) < 0);
+    if (missing.length) return `manifest 有、三个页签都没有：${show(missing)}`;
+    const extra = rendered.filter((k) => DECLARED.indexOf(k) < 0);
+    return extra.length === 0 ? true : `页面有、manifest 没有（保存会被拒）：${show(extra)}`;
+  });
+
+  await ck("页签：每个 select 的当前值都在自己的 options 里（防视图与 manifest 漂移）", async () => {
+    const bad = [];
+    for (const tab of ["params", "ads"]) {
+      const v = await openOn(tab);
+      // 空串表示这项没被赋值（真实宿主会按 manifest 的 default 填），不算漂移。
+      bad.push(
+        ...controls(v.tree, "select").filter(
+          (c) => c.value !== "" && c.options.map((o) => o.value).indexOf(c.value) < 0,
+        ),
+      );
+    }
+    return bad.length === 0 ? true : `值不在选项内：${show(bad.map((b) => [b.key, b.value]))}`;
   });
 }
 
@@ -415,13 +483,13 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   const warns = (tree) => callouts(tree).filter((c) => c.tone === "warning");
 
   await ck("校验：空规则不显示任何提示条", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
     const all = callouts(v.tree);
     return all.length === 0 ? true : `出现 ${show(all)}`;
   });
 
   await ck("校验：合法规则显示「解析通过」", async () => {
-    const v = await openView({
+    const v = await openOn("ads", {
       settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' },
     });
     const ok = callouts(v.tree).filter((c) => c.tone === "success");
@@ -429,39 +497,39 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("校验：JSON 语法错 → 拦住保存的 danger", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: "{not json" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "{not json" } });
     const d = noDanger(v.tree);
     return d.length === 1 && /JSON 语法错误/.test(d[0].text) ? true : `danger：${show(d)}`;
   });
 
   await ck("校验：顶层是数组 → 拦住（必须是对象）", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: '["/ads/"]' } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '["/ads/"]' } });
     const d = noDanger(v.tree);
     return d.length === 1 && /顶层必须是 JSON 对象/.test(d[0].text) ? true : `danger：${show(d)}`;
   });
 
   await ck("校验：未知键（dropPaths）→ 警告并点名", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: '{"dropPaths":["/ads/"]}' } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPaths":["/ads/"]}' } });
     const w = warns(v.tree);
     return w.length === 1 && /dropPaths/.test(w[0].text) ? true : `warning：${show(w)}`;
   });
 
   await ck("校验：非法正则 → 警告（运行时容错跳过，不拦保存）", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads("]}' } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads("]}' } });
     const w = warns(v.tree);
     const d = noDanger(v.tree);
     return w.length === 1 && d.length === 0 ? true : `warning ${show(w)} / danger ${show(d)}`;
   });
 
   await ck("校验：off 模式下语法错不拦保存（只是警告）", async () => {
-    const v = await openView({ settings: { adRulesMode: "off", adRulesExtra: "{bad" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "{bad" } });
     const d = noDanger(v.tree);
     const w = warns(v.tree);
     return d.length === 0 && w.length === 1 && /不生效/.test(w[0].text) ? true : `danger ${show(d)} / warning ${show(w)}`;
   });
 
   await ck("校验：生效条数写进 kv", async () => {
-    const v = await openView({
+    const v = await openOn("ads", {
       settings: { adRulesMode: "marker", adRulesExtra: '{"keepPath":["/ep1/"],"dropHosts":["ads.test"]}' },
     });
     const texts = textOf(v.tree).join(" ");
@@ -476,7 +544,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
 // ---------------------------------------------------------------------------
 {
   await ck("交互：切换模式写回 state 并反映到下一帧", async () => {
-    const v = await openView({ settings: { adRulesMode: "off" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "off" } });
     const next = await v.run(change(v.tree, "adRulesMode", "heuristic"));
     if (v.state.draft.adRulesMode !== "heuristic") return `草稿 = ${show(v.state.draft.adRulesMode)}`;
     const sel = byKey(next, "select", "adRulesMode");
@@ -484,13 +552,13 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("交互：模式值非法时按 off 处理", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker" } });
     await v.run(change(v.tree, "adRulesMode", "whatever"));
     return v.state.draft.adRulesMode === "off" ? true : `state.mode = ${show(v.state.draft.adRulesMode)}`;
   });
 
   await ck("交互：编辑规则文本写回 state，并立刻重新校验", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
     const next = await v.run(change(v.tree, "adRulesExtra", "{oops"));
     if (v.state.draft.adRulesExtra !== "{oops") return `state.extra = ${show(v.state.draft.adRulesExtra)}`;
     const d = callouts(next).filter((c) => c.tone === "danger");
@@ -498,7 +566,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("交互：未保存时「保存」按钮从禁用变为可用", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
     const disabledOf = (tree, key) => {
       const out = [];
       const walk = (n) => {
@@ -515,7 +583,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("交互：套用「广告目录过滤」预设 → mode 与规则文本同时更新", async () => {
-    const v = await openView({ settings: { adRulesMode: "off", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
     const next = await v.run(press(v.tree, "apply-dirs"));
     if (v.state.draft.adRulesMode !== "heuristic") return `state.mode = ${show(v.state.draft.adRulesMode)}`;
     const parsed = JSON.parse(v.state.draft.adRulesExtra);
@@ -525,13 +593,13 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("交互：套用「关闭」预设清空规则文本", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' } });
     await v.run(press(v.tree, "apply-off"));
     return v.state.draft.adRulesMode === "off" && v.state.draft.adRulesExtra === "" ? true : `mode ${show(v.state.draft.adRulesMode)} extra ${show(v.state.draft.adRulesExtra)}`;
   });
 
   await ck("交互：还原回到已保存的值", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/x/"]}' } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/x/"]}' } });
     await v.run(change(v.tree, "adRulesMode", "heuristic"));
     await v.run(change(v.tree, "adRulesExtra", "{broken"));
     await v.run(press(v.tree, "reset"));
@@ -541,7 +609,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("交互：未知 key 的事件不改变 state（不崩）", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker" } });
     await v.run({ node: "root/nope", type: "press" });
     await v.run({ node: "root/nope", type: "change", value: "x" });
     return v.state.draft.adRulesMode === "marker" && v.state.draft.adRulesExtra === "" ? true : `state 被改坏了：${show(v.state)}`;
@@ -553,7 +621,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
 // ---------------------------------------------------------------------------
 {
   await ck("保存：只写两个键，且值都是字符串", async () => {
-    const v = await openView({ settings: { adRulesMode: "off", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
     await v.run(change(v.tree, "adRulesMode", "heuristic"));
     await v.run(change(v.tree, "adRulesExtra", '{"dropPath":["/ads/"]}'));
     await v.run(press(v.tree, "save"));
@@ -568,7 +636,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("保存：成功后 saved* 同步，未保存标记消失", async () => {
-    const v = await openView({ settings: { adRulesMode: "off", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
     await v.run(change(v.tree, "adRulesMode", "marker"));
     const next = await v.run(press(v.tree, "save"));
     if (v.state.saved.adRulesMode !== "marker") return `savedMode = ${show(v.state.saved.adRulesMode)}`;
@@ -577,7 +645,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("保存：语法错时不调用 update，并给出 danger", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: "" } });
     await v.run(change(v.tree, "adRulesExtra", "{broken"));
     const next = await v.run(press(v.tree, "save"));
     const u = updates(v);
@@ -587,14 +655,14 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
   });
 
   await ck("保存：off 模式下语法错仍然允许保存", async () => {
-    const v = await openView({ settings: { adRulesMode: "off", adRulesExtra: "" } });
+    const v = await openOn("ads", { settings: { adRulesMode: "off", adRulesExtra: "" } });
     await v.run(change(v.tree, "adRulesExtra", "{broken"));
     await v.run(press(v.tree, "save"));
     return updates(v).length === 1 ? true : "off 模式被拦住了 —— 用户会没法先关掉再慢慢改";
   });
 
   await ck("保存：宿主拒绝时原文透传且 saved* 不变", async () => {
-    const v = await openView({
+    const v = await openOn("ads", {
       settings: { adRulesMode: "marker", adRulesExtra: "" },
       updateError: "'adRulesExtra' 不是合法的 JSON",
     });
@@ -611,7 +679,7 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
 // ---------------------------------------------------------------------------
 {
   await ck("越界：main 不发请求、不读 storage、不碰 ffmpeg", async () => {
-    const v = await openView({ settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' } });
+    const v = await openOn("ads", { settings: { adRulesMode: "marker", adRulesExtra: '{"dropPath":["/ads/"]}' } });
     await v.run(change(v.tree, "adRulesMode", "heuristic"));
     await v.run(press(v.tree, "apply-guard"));
     await v.run(press(v.tree, "save"));

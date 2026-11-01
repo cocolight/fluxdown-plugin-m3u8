@@ -57,7 +57,7 @@
     "views": [
       {
         "id": "ad-rules",
-        "title": "去广告规则",
+        "title": "插件设置",
         "location": "settings"
       }
     ]
@@ -205,13 +205,6 @@
       "type": "string",
       "widget": "textarea",
       "default": ""
-    },
-    {
-      "key": "expertMode",
-      "title": "显示专业设置",
-      "description": "打开后显示站点适配、剧集识别、编码与下载行为等调参项。默认关闭，让常用项一页看完。",
-      "type": "boolean",
-      "default": "false"
     },
     {
       "key": "targetHosts",

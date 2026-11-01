@@ -19,4 +19,5 @@
 | [0004](0004-no-sdk-jsx-runtime.md) | 视图层不用 SDK 的 JSX 运行时，改用 `flux.ui.h` | 已被 0005 取代 |
 | [0005](0005-allow-sdk-jsx-runtime.md) | 允许 SDK 的 JSX 运行时进入产物，义务登记在 THIRD-PARTY | 已接受 |
 | [0006](0006-drop-auth-entry.md) | 移除登录入口，凭据改由设置项 `authCookie` 直供 | 已接受 |
-| [0007](0007-two-tier-settings-view.md) | 设置页分「常用 / 专业」两档，`expertMode` 控制展开 | 已接受 |
+| [0007](0007-two-tier-settings-view.md) | 设置页分「常用 / 专业」两档，`expertMode` 控制展开 | 已被 0008 取代 |
+| [0008](0008-three-tab-settings-view.md) | 设置页改三个页签（基础 / 参数 / 去广告），去掉 `expertMode` | 已接受 |

@@ -23,13 +23,13 @@
 ### Added
 
 - 新增 `src/lib/credential.ts`：凭据文本解析（bearer / basic / 多行头 / Cookie），补丁与抓取两处共用
-- 新增 `expertMode` 设置项：控制插件设置页是否展开专业项，默认关
 - 新增设置页签「去广告规则」（`main.tsx` + `contributes.views`）：模式切换、规则即时校验、五档预设
 - 新增 `src/lib/rulecheck.ts`：界面侧规则校验，与拦截器共用 `parseAdRuleSet`，不另写一套判定
 - 新增 `src/lib/adpresets.ts`：从保守到激进的五档规则形态，不内置任何站点域名名单
-- 新增 `tests/ui.mjs`：37 项视图契约（树合法性、受控输入、保存语义、越界、SDK 运行时例外边界）
+- 新增 `tests/ui.mjs`：视图契约（树合法性、受控输入、保存语义、越界、SDK 运行时例外边界），现 48 项
 - `scripts/check-fast.sh` 新增第 6 条：manifest 声明的入口必须在构建配置里有映射
 - 新增 ADR-0005：视图用 SDK 的 `jsx-runtime`，AGPL 义务登记在 `THIRD-PARTY.md`；ADR-0004 随之被取代
+- 新增 ADR-0008（取代表 0007）：设置页改三个页签，去掉 `expertMode` 开关，页签选择只存视图 state
 - 新增 `AGENTS.md`、`.agents/` 工程文档、`ROADMAP.md`、`CONTRIBUTING.md`、`THIRD-PARTY.md`
 - 新增 `scripts/check-fast.sh` 快速门禁与 `.githooks/pre-commit`，本地与 CI 共用同一份断言
 - 新增 `.github/pull_request_template.md`
@@ -38,8 +38,8 @@
 ### Changed
 
 - 登录凭据改由设置项 `authCookie` 直供：下载补丁走 `originHeaders`、抓取走 `fetchHeaders`，同源闸不变
-- 设置页签改为「插件设置」：默认 12 项常用，`expertMode` 打开后追加 16 项专业项（理由：声明式设置项没有分组字段，宿主侧无法折叠）
-- 28 个设置项的标题与描述改写为面向使用者的一句话，总字数从 2767 降到 711，并按使用频率重排
+- 设置页签改为「插件设置」并分三页：基础（只有开关，11 项）、参数（填值，14 项）、去广告（2 项）；页签只是浏览位置，不写进设置
+- 27 个设置项的标题与描述改写为面向使用者的一句话，总字数从 2767 降到 670，并按「开关在前、参数在后」重排
 - 「保存」只写改动过的键，不再整份回写草稿
 - 测试链路由四层扩为五层，`npm test` 增加 `ui`；`main` 视图的 schema 与交互从此有断言
 - CI 由 `ci.yml` 改为 `build.yml`，新增 CHANGELOG 门禁与发版守卫两个 job
