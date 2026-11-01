@@ -22,6 +22,7 @@
 ### Added
 
 - 新增 `src/lib/credential.ts`：凭据文本解析（bearer / basic / 多行头 / Cookie），补丁与抓取两处共用
+- 新增 `expertMode` 设置项：控制插件设置页是否展开专业项，默认关
 - 新增设置页签「去广告规则」（`main.tsx` + `contributes.views`）：模式切换、规则即时校验、五档预设
 - 新增 `src/lib/rulecheck.ts`：界面侧规则校验，与拦截器共用 `parseAdRuleSet`，不另写一套判定
 - 新增 `src/lib/adpresets.ts`：从保守到激进的五档规则形态，不内置任何站点域名名单
@@ -36,6 +37,9 @@
 ### Changed
 
 - 登录凭据改由设置项 `authCookie` 直供：下载补丁走 `originHeaders`、抓取走 `fetchHeaders`，同源闸不变
+- 设置页签改为「插件设置」：默认 12 项常用，`expertMode` 打开后追加 16 项专业项（理由：声明式设置项没有分组字段，宿主侧无法折叠）
+- 28 个设置项的标题与描述改写为面向使用者的一句话，总字数从 2767 降到 711，并按使用频率重排
+- 「保存」只写改动过的键，不再整份回写草稿
 - 测试链路由四层扩为五层，`npm test` 增加 `ui`；`main` 视图的 schema 与交互从此有断言
 - CI 由 `ci.yml` 改为 `build.yml`，新增 CHANGELOG 门禁与发版守卫两个 job
 - 工程文档从 `docs/` 迁到 `.agents/`，`docs/` 只保留使用者文档（理由：两类读者不该共用一处）

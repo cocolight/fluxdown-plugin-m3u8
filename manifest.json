@@ -5,10 +5,18 @@
   "minAppVersion": "0.6.0",
   "description": "把播放页或 .m3u8 链接解析成可下载的 HLS 播放列表：自动选清晰度、补齐防盗链请求头，支持剧集批量、登录站点、订阅追更与反爬站处理；页面只提供 DASH 清单（.mpd）时也能自动发现并交给核心下载。",
   "homepage": "https://github.com/cocolight/fluxdown-plugin-m3u8",
-  "permissions": ["ffmpeg", "ytdlp", "intercept"],
+  "permissions": [
+    "ffmpeg",
+    "ytdlp",
+    "intercept"
+  ],
   "resolvers": [
     {
-      "match": { "urls": ["*://*/*"] },
+      "match": {
+        "urls": [
+          "*://*/*"
+        ]
+      },
       "entry": "resolver.js",
       "timeoutMs": 25000,
       "multi": true
@@ -23,16 +31,28 @@
   ],
   "hooks": {
     "entry": "hooks.js",
-    "events": ["onDone", "onError", "onCancel"]
+    "events": [
+      "onDone",
+      "onError",
+      "onCancel"
+    ]
   },
   "interceptors": {
     "entry": "intercept.js",
-    "stages": ["segments"],
-    "match": { "urls": ["*://*/*"] },
+    "stages": [
+      "segments"
+    ],
+    "match": {
+      "urls": [
+        "*://*/*"
+      ]
+    },
     "timeoutMs": 5000,
     "onFailure": "continue"
   },
-  "main": { "entry": "main.js" },
+  "main": {
+    "entry": "main.js"
+  },
   "contributes": {
     "views": [
       {
@@ -44,153 +64,53 @@
   },
   "settings": [
     {
-      "key": "targetHosts",
-      "title": "目标站点主机（逗号分隔）",
-      "description": "指定要让插件识别的网站。填入网站域名（如 example.com；会一并匹配子网站，如 video.example.com），从这些网站的播放页添加下载时，插件会自动帮你找到视频并列出清晰度。可填多个，用英文逗号分隔。留空则不识别任何网站，此时只有直接粘贴的 .m3u8 链接可触发此插件。",
-      "type": "string",
-      "widget": "text"
-    },
-    {
-      "key": "solveChallenge",
-      "title": "自动通过防抓页校验",
-      "description": "部分站点会先返回一个极小的「安全检查」页：它用脚本设置一个 Cookie，然后要求浏览器刷新。开启后插件会自动解开该 Cookie 并重新访问同一地址；解不开则退回原有行为。只覆盖「可解码的脚本校验」这一类，真正的验证码或浏览器指纹无法处理。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "followIframe",
-      "title": "跟随页面内嵌播放器",
-      "description": "页面里没有直接的 m3u8、而是把播放器放在内嵌框架（iframe）里时，自动跟进该框架再解析。跟不到则退回原有行为。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "detectDash",
-      "title": "识别页面里的 DASH 清单（.mpd）",
-      "description": "页面里没有 m3u8、但有 DASH 清单（.mpd）时，自动取出该地址交给核心的 DASH 引擎下载。关闭则只解析 HLS（.m3u8）。仅在找不到 m3u8 时兜底生效，页面同时提供两种格式时仍优先用 m3u8。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "iframeMaxFollow",
-      "title": "跟随内嵌播放器的最大层数",
-      "description": "防止跨站嵌套导致请求放大。1 = 只跟一层（推荐），最多 3 层。",
-      "type": "number",
-      "widget": "number",
-      "default": "1",
-      "min": 1,
-      "max": 3
-    },
-    {
-      "key": "detectSeries",
-      "title": "识别剧集页并弹出选集",
-      "description": "页面里出现「多集」结构时（同时含多集各自的 m3u8，或含一批同构的分集链接），提交链接后会先弹出选集窗口，可一次勾选多集批量下载，由引擎自动建立任务组。关闭后恢复为「只解析当前看到的这一条」。只对播放页生效，直接粘贴的 .m3u8 链接不受影响。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "manifestMinItems",
-      "title": "判定为剧集的最少条目数",
-      "description": "仅用于「页面上没有 m3u8、只有一批分集链接」的情况：链接按形态聚成一簇后，条目数达到此值才判定为剧集页。用于滤掉「上一集 / 下一集」这类只有两三条链接的页面。页面内直接出现多个分集 m3u8 时不看此项。",
-      "type": "number",
-      "widget": "number",
-      "default": "3",
-      "min": 2,
-      "max": 50
-    },
-    {
-      "key": "manifestMaxItems",
-      "title": "选集窗口最多列出的条目数",
-      "description": "剧集页条目过多时的展示上限（引擎自身上限为 1000）。超出的部分不会列出，也就无法勾选。",
-      "type": "number",
-      "widget": "number",
-      "default": "200",
-      "min": 1,
-      "max": 1000
-    },
-    {
-      "key": "episodeLinkPattern",
-      "title": "自定义剧集链接正则（留空用内置）",
-      "description": "高级选项。内置的剧集识别规则在个别站点不适用时，可填一个 JS 正则来指定「哪些链接算一集」；留空使用内置规则。写法为不带斜杠的正则原文，例如 \\/episode\\/(\\d+)\\/。",
-      "type": "string",
-      "widget": "text",
-      "default": ""
-    },
-    {
       "key": "preferResolution",
-      "title": "偏好画质",
+      "title": "画质",
       "type": "string",
       "widget": "select",
       "options": [
-        { "value": "best", "label": "最高码率（默认）" },
-        { "value": "1080", "label": "1080p" },
-        { "value": "720", "label": "720p" },
-        { "value": "480", "label": "480p" },
-        { "value": "360", "label": "360p" }
+        {
+          "value": "best",
+          "label": "最高码率（默认）"
+        },
+        {
+          "value": "1080",
+          "label": "1080p"
+        },
+        {
+          "value": "720",
+          "label": "720p"
+        },
+        {
+          "value": "480",
+          "label": "480p"
+        },
+        {
+          "value": "360",
+          "label": "360p"
+        }
       ],
       "default": "best"
     },
     {
-      "key": "preferCodec",
-      "title": "偏好视频编码",
-      "description": "仅影响默认选中项，不会隐藏其他画质（画质选择框仍列出全部变体）。auto = 按码率取最高。",
-      "type": "string",
-      "widget": "select",
-      "options": [
-        { "value": "auto", "label": "自动（默认）" },
-        { "value": "avc", "label": "H.264 / AVC" },
-        { "value": "hevc", "label": "H.265 / HEVC" },
-        { "value": "av01", "label": "AV1" },
-        { "value": "vp9", "label": "VP9" }
-      ],
-      "default": "auto"
-    },
-    {
       "key": "autoPick",
-      "title": "自动选择（不弹画质框）",
+      "title": "自动选最高画质",
       "type": "boolean",
-      "default": "false"
-    },
-    {
-      "key": "separateAudio",
-      "title": "音视频分离（独立音轨）",
-      "description": "解析 #EXT-X-MEDIA:TYPE=AUDIO 与纯音频变体，把音轨地址作为 audioUrl 返回，FluxDown 会自动把视频与音轨合并为单文件。auto（默认）只在源明确是「纯视频」或已把音轨单列时才分离，避免音视频合一的流被拆出第二条音轨。",
-      "type": "string",
-      "widget": "select",
-      "options": [
-        { "value": "auto", "label": "自动判断（默认）" },
-        { "value": "on", "label": "总是分离" },
-        { "value": "off", "label": "关闭" }
-      ],
-      "default": "auto"
-    },
-    {
-      "key": "audioLang",
-      "title": "音轨语言偏好",
-      "description": "按 LANGUAGE 匹配音轨（如 zh、zh-CN、ja、en）。留空则按 DEFAULT/AUTOSELECT 选默认轨。未命中会回退默认轨并记录日志。",
-      "type": "string",
-      "widget": "text",
-      "default": ""
-    },
-    {
-      "key": "audioOnly",
-      "title": "纯音频提取",
-      "description": "只下载独立音轨（音乐/播客场景）。仅当源提供独立音轨（#EXT-X-MEDIA:AUDIO 或纯音频变体）时可用，否则任务会明确报错，不会静默下载整个视频。",
-      "type": "boolean",
-      "default": "false"
+      "default": "false",
+      "description": "关闭后每次下载前弹窗让你自己挑清晰度。"
     },
     {
       "key": "nameTemplate",
-      "title": "命名模板",
-      "description": "可用占位符：{title} {res} {lang} {host} {date}。留空或 {title} 表示沿用默认命名（src/resolver.js 的 nameInfo 决策链：页面标题 → 上层 ID 目录 → 文件名，并自动剔除 index/playlist/master 这类无信息量的基础名）。注意：下载时才解析或开了「自动选择」才有文件名，弹画质框的手选模式通常拿不到。例：{title} {host}",
+      "title": "文件命名",
+      "description": "留空 =「标题-清晰度」。支持 {title} {author} {quality} 等占位符。",
       "type": "string",
       "widget": "text",
       "default": "{title} {host}"
     },
     {
       "key": "authCookie",
-      "title": "登录凭据（Cookie / bearer: / basic: / 多行请求头）",
-      "description": "需要登录才能取到 m3u8 的站点填这里。点下方按钮把「取 Cookie 的脚本」复制到剪贴板，在浏览器打开该站点按 F12 进控制台粘贴执行，再把打印出来的内容粘回本框。也支持手写 bearer:令牌、basic:用户名:密码，或每行一个「键: 值」的请求头（可写 Cookie: ... / Authorization: ...）。内容由 FluxDown 持久化保存，供抓取 playlist 与分片时复用。",
+      "title": "登录凭据",
+      "description": "只发给同一站点的请求。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
       "type": "string",
       "widget": "textarea",
       "default": "",
@@ -199,31 +119,229 @@
     },
     {
       "key": "userAgent",
-      "title": "自定义 User-Agent",
-      "description": "留空则用 FluxDown 默认 UA。部分站点会按 UA 返回不同的 playlist（移动端/桌面端）。",
+      "title": "User-Agent",
+      "description": "留空用 FluxDown 默认。部分站点按 UA 返回不同清晰度。",
       "type": "string",
       "widget": "text",
       "default": ""
     },
     {
       "key": "extraHeadersRaw",
-      "title": "额外请求头（每行一条 Key: Value）",
-      "description": "同时作用于「抓取 playlist」和「抓取分片」。以 # 开头的行视为注释。显式优先：同名头会覆盖插件自动推导的 Referer/Origin。例：\nX-Requested-With: XMLHttpRequest\nCookie: 已由 FluxDown 自动携带，一般无需在此重复",
+      "title": "额外请求头",
+      "description": "每行一条「键: 值」，以 # 开头为注释。同名头会覆盖插件自动推导的 Referer/Origin。",
       "type": "string",
       "widget": "textarea",
       "default": ""
     },
     {
+      "key": "separateAudio",
+      "title": "独立音轨",
+      "description": "音视频分开的站点选哪条音轨。",
+      "type": "string",
+      "widget": "select",
+      "options": [
+        {
+          "value": "auto",
+          "label": "自动判断（默认）"
+        },
+        {
+          "value": "on",
+          "label": "总是分离"
+        },
+        {
+          "value": "off",
+          "label": "关闭"
+        }
+      ],
+      "default": "auto"
+    },
+    {
+      "key": "audioOnly",
+      "title": "只要音频",
+      "description": "跳过视频，只下载音轨。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
+      "key": "remuxToMp4",
+      "title": "转成 MP4",
+      "description": "容器不标准时无损转封装，多花一点时间。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "useYtdlp",
+      "title": "复杂站点交给 yt-dlp",
+      "description": "内置解析抓不到时改用 yt-dlp 重试，需已安装该组件。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
+      "key": "adRulesMode",
+      "title": "去广告",
+      "description": "下载前丢弃广告分片。只对本插件解析出来的任务生效。",
+      "type": "string",
+      "widget": "select",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭（默认）"
+        },
+        {
+          "value": "marker",
+          "label": "仅按广告标记（保守）"
+        },
+        {
+          "value": "heuristic",
+          "label": "标记 + 推测（激进）"
+        }
+      ],
+      "default": "off"
+    },
+    {
+      "key": "adRulesExtra",
+      "title": "去广告自定义规则",
+      "description": "JSON，可留空。三个键：keepPath / dropPath / dropHosts；在插件设置页里有即时校验与预设。",
+      "type": "string",
+      "widget": "textarea",
+      "default": ""
+    },
+    {
+      "key": "expertMode",
+      "title": "显示专业设置",
+      "description": "打开后显示站点适配、剧集识别、编码与下载行为等调参项。默认关闭，让常用项一页看完。",
+      "type": "boolean",
+      "default": "false"
+    },
+    {
+      "key": "targetHosts",
+      "title": "只在这些站点生效",
+      "description": "逗号分隔的主机名；留空 = 对所有站点生效。",
+      "type": "string",
+      "widget": "text"
+    },
+    {
+      "key": "solveChallenge",
+      "title": "自动过「安全检查」页",
+      "description": "遇到防抓页时解出 Cookie 并对同一地址重试一次。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "followIframe",
+      "title": "跟随内嵌播放器",
+      "description": "页面里没有 m3u8 时，跟进 iframe 再找一层。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "iframeMaxFollow",
+      "title": "内嵌最多跟进几层",
+      "description": "1–3，默认 1。",
+      "type": "number",
+      "widget": "number",
+      "default": "1",
+      "min": 1,
+      "max": 3
+    },
+    {
+      "key": "detectDash",
+      "title": "识别 DASH 清单",
+      "description": "页面只给 .mpd 时也能发现并交给核心下载。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "htmlFallbackYtdlp",
+      "title": "抓到网页时用 yt-dlp 兜底",
+      "description": "返回 HTML 而非播放列表时，改用 yt-dlp 重抽直链。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "detectSeries",
+      "title": "识别剧集页",
+      "description": "命中剧集特征时弹出选集框。",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "manifestMinItems",
+      "title": "判为剧集的最少条目",
+      "description": "低于此数量不弹选集框，避免误判。",
+      "type": "number",
+      "widget": "number",
+      "default": "3",
+      "min": 2,
+      "max": 50
+    },
+    {
+      "key": "manifestMaxItems",
+      "title": "选集框最多列几条",
+      "description": "超出部分不列出。",
+      "type": "number",
+      "widget": "number",
+      "default": "200",
+      "min": 1,
+      "max": 1000
+    },
+    {
+      "key": "episodeLinkPattern",
+      "title": "自定义剧集链接正则",
+      "description": "留空用内置规则。",
+      "type": "string",
+      "widget": "text",
+      "default": ""
+    },
+    {
+      "key": "preferCodec",
+      "title": "编码偏好",
+      "description": "H.264 兼容性最好；H.265 体积小，但部分播放器不支持。",
+      "type": "string",
+      "widget": "select",
+      "options": [
+        {
+          "value": "auto",
+          "label": "自动（默认）"
+        },
+        {
+          "value": "avc",
+          "label": "H.264 / AVC"
+        },
+        {
+          "value": "hevc",
+          "label": "H.265 / HEVC"
+        },
+        {
+          "value": "av01",
+          "label": "AV1"
+        },
+        {
+          "value": "vp9",
+          "label": "VP9"
+        }
+      ],
+      "default": "auto"
+    },
+    {
+      "key": "audioLang",
+      "title": "音轨语言",
+      "description": "留空不限，例如 chi / jpn。",
+      "type": "string",
+      "widget": "text",
+      "default": ""
+    },
+    {
       "key": "ephemeral",
-      "title": "防盗链/签名直链（跳过元数据探测）",
-      "description": "直链是一次性的或带防盗链时打开，避免探测把链接用掉；恢复下载时会重新解析。",
+      "title": "一次性签名链接",
+      "description": "跳过元数据探测直接下载，适合会过期的直链。",
       "type": "boolean",
       "default": "false"
     },
     {
       "key": "rangeCapKb",
-      "title": "单个 Range 请求上限（KiB，0 = 不限制）",
-      "description": "有些网盘 CDN 对单次请求的体积敏感：一个请求要超过约 5 MiB 就直接 403。填 4096 这类值可把每个请求切成小窗口，在不牺牲多线程的前提下拿到文件。需要 FluxDown 0.6.0 及以上；留 0 表示不干预，小于 64 的值按关闭处理。",
+      "title": "单次 Range 上限（KiB）",
+      "description": "0 = 不限制；低于 64 按关闭处理。",
       "type": "number",
       "widget": "number",
       "default": "0",
@@ -231,53 +349,11 @@
       "max": 65536
     },
     {
-      "key": "useYtdlp",
-      "title": "启用 yt-dlp 委派（复杂站）",
-      "description": "开启后，链接直接交给 yt-dlp 抽取直链，适合 m3u8 藏在 JS/JSON 里、原生 resolver 抠不出的站点。需先在「设置→扩展→组件」安装 yt-dlp。",
-      "type": "boolean",
-      "default": "false"
-    },
-    {
-      "key": "htmlFallbackYtdlp",
-      "title": "抓到 HTML 页时改用 yt-dlp 兜底",
-      "description": "抓 playlist 时若返回的是 HTML（登录页/防盗链拦截页）而非 #EXTM3U，自动尝试交给 yt-dlp 重抽直链。需已安装 yt-dlp。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
-      "key": "remuxToMp4",
-      "title": "下载后 remux 为 MP4（保险）",
-      "description": "核心 HLS 引擎已自带 TS→MP4 转封装（失败时保留 .ts）。此项是兜底：仅当核心 remux 失败、或产物来自非 HLS 任务（如 yt-dlp 抽出的 .mkv/.webm）时，用 ffmpeg 无损补转一次；已是 .mp4 则跳过。需安装 ffmpeg 组件。",
-      "type": "boolean",
-      "default": "true"
-    },
-    {
       "key": "fixMuxFallback",
-      "title": "音视频合并失败时由插件兜底",
-      "description": "当 FluxDown 未能把视频与独立音轨合并（降级留下单独音频文件）时，用 ffmpeg 以 -c copy 补做合并。需安装 ffmpeg 组件。",
+      "title": "合并失败时插件兜底",
+      "description": "音视频分轨下载后核心合并失败，用 ffmpeg 再试一次。",
       "type": "boolean",
       "default": "true"
-    },
-    {
-      "key": "adRulesMode",
-      "title": "分片级去广告",
-      "description": "下载前按播放列表里的广告标记丢弃广告分片（HLS）：仅按标记 = 只认 #EXT-X-CUE-OUT / #EXT-X-CUE-IN 与 DATERANGE 里明确标注的广告区间，最保守；标记 + 推测 = 额外按「极短分片」与分片命名（ad / preroll / promo 等）判断，激进一些。只对本插件解析出来的任务生效，普通直链与其他插件的任务不受影响。注意：一旦真的丢了分片，该任务已有的续传进度会作废，会从头重下。",
-      "type": "string",
-      "widget": "select",
-      "options": [
-        { "value": "off", "label": "关闭（默认）" },
-        { "value": "marker", "label": "仅按广告标记（保守）" },
-        { "value": "heuristic", "label": "标记 + 推测（激进）" }
-      ],
-      "default": "off"
-    },
-    {
-      "key": "adRulesExtra",
-      "title": "去广告自定义规则（JSON，可留空）",
-      "description": "高级选项，仅在上一项不为「关闭」时生效。格式为 JSON 对象，三个可选数组：keepPath（白名单，分片地址命中任一正则就永不丢弃）、dropPath（黑名单，命中即丢）、dropHosts（主机名精确相等的分片一律丢弃）。例：{\"keepPath\":[\"/ep\\\\d+/\"],\"dropPath\":[\"/ads/\"],\"dropHosts\":[\"ads.example.com\"]}。正则最多 20 条、每条不超过 200 字符；写错只会让该条失效并记一条日志，不会影响下载。",
-      "type": "string",
-      "widget": "textarea",
-      "default": ""
     }
   ]
 }

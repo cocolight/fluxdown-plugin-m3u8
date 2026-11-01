@@ -17,7 +17,7 @@
 | 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 22 项 | - | planned | 4 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
 | 8 | 字幕下载 / 封装 | - | dropped | - | 判定依据：`.agents/capability-matrix.md` §4 —— resolver 返回值无字幕字段，插件亦不能写入下载目录 |
 | 9 | 移除登录入口，凭据改由设置项 `authCookie` 直供（v3.0.0） | - | done | 6 | `contract` 断言 manifest 无 `auth` 段/无 `auth` 权限/产物无 `auth.js`；`npm test` 五层全绿 |
-| 10 | 设置页改为「大众 / 专业」两档视图 | - | in-progress | 9 | `expertMode` 默认关时只显示 12 项常用设置；`npm run ui` 断言两档渲染与切换 |
+| 10 | 设置页改为「大众 / 专业」两档视图 | - | done | 9 | `expertMode` 默认关时只显示 12 项常用设置；`npm run ui` 断言两档渲染与切换 |
 
 > 第 1、2 行写的「parity 67/67 一致」是 M1 / M2 当时的验收口径，按只追加规则原样保留。
 > M4 起 parity 口径为 63/67 一致 + 4 项 `diverges` 声明（见第 4 行），以 `npm run parity` 实际输出为准。
