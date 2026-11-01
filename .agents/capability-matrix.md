@@ -37,7 +37,7 @@
 | DRM（SAMPLE-AES / FairPlay / Widevine） | ❌ | ❌ | ❌ 不满足 —— 需 CDM 与许可证，任何工具都无法绕过 |
 | LL-HLS（`#EXT-X-PART` 部分段） | ❌ | ❌ | ❌ 不满足 |
 | 真直播无限录制 | ❌ | ❌ | ❌ 不满足 —— 滚动窗口的持续追加落盘需引擎配合 |
-| `#EXT-X-KEY:METHOD=NONE`（AES-128 后切明文段） | ❌（上游 `m3u8-rs 6.0.1` 缺陷） | ❌ | ❌ 不满足 —— 引擎侧兜底 PR [zerx-lab/FluxDown#715](https://github.com/zerx-lab/FluxDown/pull/715) 已提 |
+| `#EXT-X-KEY:METHOD=NONE`（AES-128 后切明文段） | ✅（引擎 v0.5.4 起已修） | ✅ | ✅ 满足 —— 上游缺陷由 [zerx-lab/FluxDown#715](https://github.com/zerx-lab/FluxDown/pull/715) 修复，随 v0.5.4 发布，插件无需干预 |
 | ISM / 平滑流式 | ❌ | ❌ | ❌ 不满足 —— 非 m3u8 体系 |
 
 ---
@@ -48,7 +48,7 @@
 | --- | --- | --- | --- |
 | 公开直链 `.m3u8` | ✅ 完整 | 无增益（纯透传） | `hls_downloader::is_hls_url()` 按扩展名分流，**完全不经过插件** |
 | 播放页 URL（不含 `.m3u8`） | ❌ 按普通 HTTP 下载 → 得到 HTML | ✅ 抓页源码抠 `master.m3u8` | 引擎无页面解析；yt-dlp 在核心侧只有组件管理，运行时唯一入口是插件桥 `flux.ytdlp` |
-| 防盗链（Referer / Origin / UA / 自定义头） | ❌ 无从得知页面来源 → 403 | ✅ 返回 `extraHeaders` | resolver 专属 |
+| 防盗链（Referer / Origin / UA / 自定义头） | ❌ 无从得知页面来源 → 403 | ✅ 返回 `request` 补丁（v2.0.0 起） | resolver 专属 |
 | 选轨（语言）/ 纯音频 / 按编码筛 | ⚠️ 只有 `select_variant`（最高带宽），无选轨概念 | ✅ `audioUrl` + `audioOnly` + `preferCodec` | |
 | 文件名 | ⚠️ 有 `title → video` 兜底链，直链常得到裸名 | ✅ 四层取值链 + 模板 | |
 | 复杂前端（m3u8 藏在 JS / JSON） | ❌ | ✅ yt-dlp 委派 | |
@@ -72,7 +72,7 @@
 | 能力 | 裸核心的行为 | 插件怎么补 | 开关 | 判定 |
 | --- | --- | --- | --- | --- |
 | 播放页 URL → 发现 master | 按普通 HTTP 下载 → 得到 HTML 文件 | 抓页面源码 + 正则抠 `master.m3u8`（支持 `\/` JSON 转义与相对地址） | `targetHosts` 限定生效站点 | **独占** |
-| 防盗链 `Referer` / `Origin` | 无从得知页面来源，403 | 返回 `extraHeaders`，`Referer` 优先取页面 URL（而非 origin） | 自动 | **独占** |
+| 防盗链 `Referer` / `Origin` | 无从得知页面来源，403 | 返回 `request.referrer`，优先取页面 URL（而非 origin）（v2.0.0 起） | 自动 | **独占** |
 | 自定义 UA / 任意请求头 | 无入口 | `userAgent` + `extraHeadersRaw`（多行 `Key: Value`），**抓 playlist 与抓分片共用同一套头** | `userAgent`、`extraHeadersRaw` | **独占** |
 | 独立音轨（`#EXT-X-MEDIA:TYPE=AUDIO`） | 支持 `audioUrl` 并自动 mux，但**自己选不出音轨** | 解析 AUDIO 组与纯音频 `STREAM-INF` 变体，输出 `audioUrl` | `separateAudio` | **独占（发现层）** |
 | 多语言选轨 | 无选轨概念 | `AUDIO` 组收敛 → `LANGUAGE` → `DEFAULT` → `AUTOSELECT` → 首条 | `audioLang` | **独占** |
@@ -83,7 +83,7 @@
 | 伪 m3u8（HTML 登录页 / 拦截页）识别 | 当成视频下载 → 得到一个 HTML | `#EXTM3U` 校验 + HTML 特征识别 → 可自动切 yt-dlp 兜底 | `htmlFallbackYtdlp` | **独占** |
 | 复杂前端（m3u8 藏在 JS / 加密 JSON） | 无 | `flux.ytdlp` 委派抽直链 | `useYtdlp` | **独占** |
 | **剧集页批量下载** | 无（一页 N 集只能一集一集贴） | 返回 `manifest` 清单，**引擎**自动裂变为任务组；二段以 `resolverItem` 回调取单直链（`v1.5.0`） | `detectSeries`（+ `manifestMinItems` / `manifestMaxItems` / `episodeLinkPattern`） | **独占** |
-| **登录凭据** | 无 | `auth` 入口把 Cookie / Bearer / Basic / 自定义头交宿主持久化，并**由插件并进 `extraHeaders`**（宿主只在 `flux.fetch` 内注入，下载链路须插件补齐）（`v1.6.0`） | `authCookie` | **独占** |
+| **登录凭据** | 无 | `auth` 入口把 Cookie / Bearer / Basic / 自定义头交宿主持久化，并**由插件并进 `request.originHeaders`**（宿主只在 `flux.fetch` 内注入，下载链路须插件补齐；v2.0.0 起按 origin 白名单强制）（`v1.6.0`） | `authCookie` | **独占** |
 | **订阅追更** | 内置仅 RSS，无插件订阅 | `subscribe` provider 枚举列表页 → feed，引擎按 `guid` 去重建任务（`v1.6.0`） | 订阅源（`providerId = m3u8play`） | **独占** |
 | **防抓页 Cookie 挑战** | 无 | 解出挑战页种下的 Cookie，对**同一地址重取一次**（`v1.7.0`） | `solveChallenge` | **独占** |
 | **内嵌播放器跟随** | 无 | 取 `<iframe src>`（同站优先）或 maccms `player_data.link` 兜底 → 跟进解析（`v1.7.0`） | `followIframe`、`iframeMaxFollow` | **独占** |
@@ -99,22 +99,21 @@
 插件**确定独有的能力**收敛为六类：**播放页发现 + 鉴权、选轨 · 纯音频、剧集页批量枚举、登录 / 订阅 / 反爬站、清单发现（HLS + DASH）、分片级去广告（v2.1.0）**。
 其余在「装了浏览器扩展 + 用浏览器触发下载」的前提下会被核心或扩展覆盖。
 
-> **去广告：v1.4.3 下线，v2.1.0 以另一种形态回归**。旧方案是「改写 playlist 指向本地清洗服务」（`adClean` / `adCleanServer`，已从 manifest 移除），已随 `v1.4.3` 停用。`v2.1.0` 起改用引擎的**拦截平面**：`interceptors.segments` 阶段拿到引擎已解析好的分片表，插件只需返回要丢弃的 `id` 列表 —— 不再需要外部进程，也不再自己绝对化分片地址。旧方案记录见 [ad-removal-notes.md](ad-removal-notes.md)。
+> **去广告：v1.4.3 下线，v2.1.0 以另一种形态回归**。旧方案是「改写 playlist 指向本地清洗服务」（`adClean` / `adCleanServer`，已从 manifest 移除），已随 `v1.4.3` 停用。`v2.1.0` 起改用引擎的**拦截平面**：`interceptors.segments` 阶段拿到引擎已解析好的分片表，插件只需返回要丢弃的 `id` 列表 —— 不再需要外部进程，也不再自己绝对化分片地址。旧方案记录见 [archive/ad-removal-notes.md](archive/ad-removal-notes.md)。
 
 ---
 
 ## 4. 硬限制（接口不存在，别再尝试）
 
-- **字幕（WebVTT）**：`resolve()` 返回字段**穷举**为 `url` / `audioUrl` / `fileName` / `totalBytes` / `extraHeaders` / `request` / `ephemeral` / `rangeSupported` / `variants` / `defaultVariantIndex` / `manifest` —— **没有字幕字段**；且 `flux.fs` 与 ffmpeg 沙箱是两个独立工作区，抓到的字幕文件送不进去。插件**只能识别并记录**字幕轨，无法下载 / 封装 / 烧录。
+- **字幕（WebVTT）**：`resolve()` 返回字段**穷举**为 `url` / `audioUrl` / `fileName` / `totalBytes` / `request` / `ephemeral` / `rangeSupported` / `variants` / `defaultVariantIndex` / `manifest` —— **没有字幕字段**；且 `flux.fs` 与 ffmpeg 沙箱是两个独立工作区，抓到的字幕文件送不进去。插件**只能识别并记录**字幕轨，无法下载 / 封装 / 烧录。
   即便有了 `recordArtifact`（v2.2.0），它也只登记**已存在**于保存目录里的文件，且文件名必须以任务主文件主干开头 —— 插件没有把任意文件写进保存目录的能力（ffmpeg 牢笼只能以相对名操作该目录）。
 - **插件不能创建任务**：`flux.task` 只有 `requestRetry`（且仅在 `onError` 有效），无分组 CRUD、无任务查询。**但引擎会据插件输出代为建任务** —— 清单（`manifest`）→ 裂变建组，订阅条目 → 建任务。插件自身始终不建任务。
 - **`onMetaProbed` 永不触发**：带 resolver 的插件该钩子不生效（官方明确），故 manifest 不订阅它。`onStart` 亦未订阅（仅日志、徒增噪音）。
 - **`hooks.match` 只按任务原始 URL 过滤**：播放页 URL 不含 `m3u8` ⇒ 会漏掉所有钩子，故插件改用 `taskId` 存储标记来判断「是不是本插件经手的任务」。
 - **DRM / LL-HLS / 真直播**：SAMPLE-AES、SAMPLE-AES-CTR、FairPlay、Widevine 的解密在核心 `hls_downloader`（只实现 `NONE` / `AES-128`，其余在解析阶段直接拒绝）与更底层的 CDM；LL-HLS 的 partial segment 拼接、直播滚动窗口的追加落盘同样在引擎层。插件层够不到。
-- **`#EXT-X-KEY:METHOD=NONE`**：**上游 `m3u8-rs 6.0.1` 缺陷**（`Key::from_hashmap` 守卫写反 → 标签降级为未知 → 明文段被上一段密钥解密 → `PKCS7 … Unpad Error`）。插件不能返回 playlist 内容，**插件层无法规避**。证据链与补丁见 [upstream-m3u8-rs-method-none.md](upstream-m3u8-rs-method-none.md)。
 - **嵌套 master 递归**（master 里再指 master）：内外层结构完全相同、无可靠信号，只能靠多抓一次子 playlist 才能判断，为省一次 RTT 未实现。
 - **按容器（fMP4 vs TS）筛选**：master 层没有容器信息，只能在变体 `label` 里展示编码。
-- **key URI（`#EXT-X-KEY`）单独带鉴权头**：密钥请求由核心引擎发出，插件无法按请求区分，只能通过 `extraHeaders` 全局覆盖。
+- **key URI（`#EXT-X-KEY`）单独带鉴权头**：密钥请求由核心引擎发出，插件无法按请求区分，只能通过 `request.setHeaders` 全局覆盖。
 - **DASH 只能「发现地址」，不能解析（`v1.8.0`）**：插件能抠出页面里的 `.mpd` 并返回，但 ——
   ① `resolve()` 返回契约里没有「选哪条 representation」的字段，**表征选择只能由核心做**；
   ② 返回值 scheme 白名单（`{http,https,ftp,magnet,ed2k}`）**没有 `data:`**，插件**无法回传改写后的清单内容** ⇒ SegmentBase 翻译、直播清单改写均不可能；
@@ -143,4 +142,4 @@
 ★ **`minAppVersion` 救不了旧版**：manifest 为 `deny_unknown_fields` —— 旧版 FluxDown 见到 `multi` / `subscriptions` / `auth` 会**拒绝整份 manifest**（表现为插件被跳过，而非忽略该字段）。`minAppVersion` 是在 **serde 解析成功之后**才检查的，此时旧版早已解析失败。因此：
 
 - 门槛只能**按能力分设并逐版抬高**，且**不可回落** —— v1.7.0 虽然没引入新字段，但 manifest 里仍带着 `auth` / `subscriptions` 段，门槛必须跟着 v1.6.0 留在 `0.4.8`；
-- 这些字段属引擎契约、`subscriptions` **未进公开文档**，存在随版本变动的风险，落地时须绑定实际安装版本复验。
+- 这些字段属引擎契约，存在随版本变动的风险，落地时须绑定实际安装版本复验。

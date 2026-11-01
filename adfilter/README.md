@@ -8,7 +8,7 @@ FluxDown 插件「增强 C：本地源头去广告」的**外置**组件。它�
 （仅 Python 3 标准库，无第三方依赖），与插件本体解耦：插件只负责把引擎要抓的
 playlist 地址改写为指向本服务，**清洗逻辑全部在这里**。
 
-> 详细方案与一手结论见 [`../docs/ad-removal-notes.md`](../docs/ad-removal-notes.md)。
+> 详细方案与一手结论见 [`../.agents/archive/ad-removal-notes.md`](../.agents/archive/ad-removal-notes.md)。
 
 ## 它做什么
 

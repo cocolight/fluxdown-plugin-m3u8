@@ -14,6 +14,7 @@
     "validate": "fluxdown-plugin validate",
     "pack": "fluxdown-plugin pack",
     "typecheck": "tsc --noEmit",
+    "test": "npm run parity && npm run contract && npm run intercept && npm run postprocess",
     "parity": "node tests/parity.mjs",
     "contract": "node tests/contract.mjs",
     "intercept": "node tests/intercept.mjs",

@@ -1,13 +1,14 @@
-# WorkBuddy 本地记忆（含个人隐私，不入库）
-.workbuddy/
-
-# 依赖
+# 依赖 / 构建产物
 node_modules/
-
-# 构建产物：发布包单独托管在 GitHub Release，不进版本库
-*.fxplug
 dist/
 build/
+out/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# 发布包单独托管在 GitHub Release，不进版本库
+*.fxplug
 
 # 比对工具的自检副本（PARITY_DIST 指向这里）
 .mutant/
@@ -15,17 +16,36 @@ build/
 # 沙箱环境的安全删除暂存目录
 .Trash-*/
 
-# 临时构建脚本与 Nuitka 生成的启动器残留
+# adfilter 历史构建残留（Nuitka）
 _build*.py
 _build*.exe
 _build*.cmd
-
-# Nuitka 中间产物
 *.build/
 *.dist/
 *.onefile-build/
 _build_exe.build/
 
-# Python 缓存（adfilter 清洗服务）
-__pycache__/
-*.pyc
+# Python 虚拟环境 / 缓存
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# 临时 / 日志
+*.tmp
+*.log
+
+# 编辑器 / OS
+.DS_Store
+.idea/
+.vscode/
+
+# AI 工具数据（本地，不纳入版本控制）
+.workbuddy/
+
+# 密钥（绝不提交）
+*.key
+*.pem
+.env
+.env.*
+!.env.example
+!*.env.example

@@ -1,0 +1,11 @@
+#!/bin/sh
+# 提交前门禁：只跑 scripts/check-fast.sh，不自动修改任何文件。
+#
+# 安装一次（每个 clone 都要做，或写进本地初始化脚本）：
+#   git config core.hooksPath .githooks
+#
+# 校验逻辑只有一份，在 scripts/check-fast.sh；CI 调同一个脚本。
+# 本文件不复制任何断言 —— 两份断言必然漂移。
+set -eu
+root=$(git rev-parse --show-toplevel)
+exec "$root/scripts/check-fast.sh"

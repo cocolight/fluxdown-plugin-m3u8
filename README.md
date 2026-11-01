@@ -59,13 +59,20 @@
 
 ## 文档
 
+使用者文档：
+
 | 文档 | 内容 |
 | --- | --- |
 | [配置说明](docs/configuration.md) | 全部 27 个设置项：作用 / 怎么配 / 效果 / 示例，含登录、订阅、命名等配置细节 |
-| [能力边界矩阵](docs/plugin-capability-matrix.md) | 核心与插件各自做了什么、哪些是官方接口的硬限制 |
-| [SDK 迁移方案](docs/sdk-migration-plan.md) | 插件系统换代（引擎 v0.5.8）后的能力变化、模块映射、分阶段里程碑与验收 |
-| [上游缺陷：`METHOD=NONE`](docs/upstream-m3u8-rs-method-none.md) | `m3u8-rs` 上游 IV 校验缺陷的复现、根因、四态矩阵与 PR 状态 |
-| [去广告方案调研笔记](docs/ad-removal-notes.md) | 历史调研：源码级论证、走过的死路与实测数据（旧方案已停用，v2.1.0 改由拦截器实现） |
+
+工程文档（改代码、判断能力边界时看，不是安装使用所需）：
+
+| 文档 | 内容 |
+| --- | --- |
+| [能力边界矩阵](.agents/capability-matrix.md) | 核心与插件各自做了什么、哪些是官方接口的硬限制 |
+| [SDK 迁移记录](.agents/sdk-migration.md) | 插件系统换代（引擎 v0.5.8）后的能力变化、模块映射、里程碑与装机待验项 |
+| [架构与代码约定](.agents/architecture.md) | 目录分层、依赖方向、错误处理、测试分层 |
+| [AI 协作规则](AGENTS.md) | 给 AI 编码助手的行为规则与红线；[贡献指南](CONTRIBUTING.md) 面向人 |
 
 ## 工作原理（简述）
 
@@ -100,33 +107,49 @@
 
 ## 限制
 
-以下为**官方接口的硬限制**，不是本插件尚未实现（详见 [`docs/plugin-capability-matrix.md`](docs/plugin-capability-matrix.md)）：
+以下为**官方接口的硬限制**，不是本插件尚未实现（详见 [`.agents/capability-matrix.md`](.agents/capability-matrix.md)）：
 
 - **字幕（WebVTT）**：resolver 的返回值里没有任何字幕字段；同时 ffmpeg 沙箱只允许访问产物目录内的相对名，而 `flux.fs` 是另一个独立工作区，抓到的字幕文件送不进去。因此**插件单层无法下载/封装/烧录字幕**。插件会识别并记录字幕轨（写日志），但不会下载。
 - **插件不能创建任务**：`flux.task` 只有 `requestRetry`，官方也明确插件不能建任务。剧集批量下载（v1.5.0）走的是「插件返回清单 → **引擎**据清单自动裂变为任务组」的机制，插件自身仍不建任务。
 - **`onMetaProbed`**：带 resolver 的插件该钩子永不触发（官方明确），因此 manifest 不订阅它。
 - **SAMPLE-AES / SAMPLE-AES-CTR / FairPlay / Widevine 等 DRM 解密**、**LL-HLS（`#EXT-X-PART` 部分段）**、**真直播无限录制**：属于核心 `hls_downloader` 的能力，插件层够不到。含 Widevine / FairPlay / PlayReady 的流需要 CDM 与许可证，**任何下载工具都无法绕过**；这类场景请用 yt-dlp 委派或 [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE)。插件会在解析时把源的加密方式（METHOD / KEYFORMAT）写进日志，便于判断失败归属。
 - **DASH 只做「发现」，不做解析（v1.8.0）**：插件能把页面里的 `.mpd` 地址抠出来交给核心，但**分片结构、表征（Representation）选择、`SegmentBase` / `indexRange`、DASH 直播（`type="dynamic"`）、CENC/DRM** 全部取决于核心 DASH 引擎 —— 前者是插件返回值里没有「选哪条 representation」的字段，后者是核心尚未实现或本就无解（DRM）。此外插件**不能改写清单内容**（返回值 scheme 白名单没有 `data:`），因此无法翻译 SegmentBase 或改写直播清单。
-- **`#EXT-X-KEY:METHOD=NONE`（AES-128 段之后切回明文段）当前会失败，且不是插件的问题**：核心所依赖的 `m3u8-rs 6.0.1` 有一处 IV 校验写反的上游缺陷，使该标签被降级为未知标签，于是明文段被错误地用上一段的 AES-128 密钥解密，报 `decrypt_segment: … PKCS7 decrypt error (Unpad Error)`。插件不能改写 playlist 内容，无法规避。**完整复现、根因与修复补丁见 [`docs/upstream-m3u8-rs-method-none.md`](docs/upstream-m3u8-rs-method-none.md)**。
 - 播放页解析依赖兜底正则，复杂前端（m3u8 在加密 JSON / 分段加载）仍需自定义 `extractMaster` 或启用 yt-dlp 委派。
 - **真正的 JS 指纹 / 验证码型防抓页无法处理**（v1.7.0）：插件沙箱既无 DOM 也无 JS 执行环境，只能覆盖「用内联脚本种 Cookie 后重载」这类**可解码**的校验形态。遇到指纹或验证码请改用浏览器扩展捕获或 yt-dlp。
 - **剧集/订阅的枚举依赖通用启发式**：只能枚举**写在静态 HTML 里**的分集链接。分集列表由前端 JS 调 API 渲染的站点（典型如 B 站番剧页 —— 实测其页面 `m3u8` 出现 0 次、站内分集链接仅 1 条、无 `__INITIAL_STATE__`）**无法枚举**，这不是缺陷而是通用启发式的天花板；这类站点请走 yt-dlp 委派。
-- **订阅（`subscriptions`）未列入 FluxDown 公开插件文档**：按引擎实现接入（自 v0.4.8 起提供），引擎升级后行为若有变化以引擎源码为准。`minAppVersion` 现为 `0.6.0`，由 `maxRangeBytes` 字段决定（见上）。
 - **去广告只覆盖 HLS，且只在「有标记或命名规整」时可靠（v2.1.0）**：插件现在能在 `interceptors.segments` 阶段丢弃广告分片，但这是**启发式**能力 —— 只认 `CUE-OUT`/`CUE-IN`、`DATERANGE` 与分片命名，不解码画面、不做音频指纹。DASH 任务不处理（分片编号语义不同，且没有 CUE 标记）。成对性、密钥边界、不丢空三条纪律由插件强制，宁可不动也不丢正片。
 
 ## 已停用：本地源头去广告（v1.4.3 – v2.0.0）
 
 插件曾支持「下载前把 playlist 改写为指向本地清洗服务的地址，由服务剔掉广告段」（旧称「增强 C」）。**自 v1.4.3 起该能力整体停用**：`adClean` / `adCleanServer` 两个设置项已从 manifest 移除，resolver 不再改写任何返回的 URL；`adfilter/` 目录保留在仓库中但**不再维护**，与插件之间已无任何对接通道。
 
-**v2.1.0 起改用引擎的拦截平面重做**（见上文「分片级去广告」设置项）：不再需要外部进程，插件拿到的是引擎已解析好的分片表，只需返回要丢的 id 列表。旧的「增强 C」源码仍作为回归基线保存在 `tests/legacy/resolver.js`，仅作历史参考 —— **不要**再恢复它。历史方案论证与实测数据见 [`docs/ad-removal-notes.md`](docs/ad-removal-notes.md)。
+**v2.1.0 起改用引擎的拦截平面重做**（见上文「分片级去广告」设置项）：不再需要外部进程，插件拿到的是引擎已解析好的分片表，只需返回要丢的 id 列表。旧的「增强 C」源码仍作为回归基线保存在 `tests/legacy/resolver.js`，仅作历史参考 —— **不要**再恢复它。历史方案论证与实测数据见 [`.agents/archive/ad-removal-notes.md`](.agents/archive/ad-removal-notes.md)。
 
 ## 文件结构
 
 ```text
 .                                    # 仓库根（构建工程，非插件本体）
-├── manifest.json                    # 插件清单源文件（identity、权限、设置、entry、auth、subscriptions）
+├── manifest.json                    # 插件清单源文件（identity、权限、设置、五处入口指向）
 ├── fluxdown-plugin.config.json      # 构建配置：TS 入口 → 产物文件名映射
-├── package.json / tsconfig.json     # 构建与类型检查配置
+├── package.json / tsconfig.json     # 构建、测试与类型检查配置
+├── AGENTS.md                        # AI 编码助手规则：路由表、常用命令、红线、DoD、事实源坐标
+├── ROADMAP.md                       # 功能清单，每行带可判定的验收标准
+├── CHANGELOG.md                     # 变更记录（Keep a Changelog）
+├── CONTRIBUTING.md                  # 分支 / 提交 / PR 规范与本地检查
+├── THIRD-PARTY.md                   # 第三方依赖许可证登记
+├── .agents/                         # 工程协作文档（AI 与人共读，不是安装所需）
+│   ├── architecture.md              # 分层、依赖方向、错误处理、测试分层
+│   ├── configuration.md             # 环境 / Git / 行尾 / CI / 分支保护 / 依赖安全
+│   ├── definition-of-done.md        # 完成定义与测试质量基线
+│   ├── extension-points.md          # 「要加 X 改哪里」
+│   ├── releasing.md                 # 发版清单与命名规则
+│   ├── sdk-migration.md             # SDK 迁移记录、版本门槛表、装机待验项
+│   ├── capability-matrix.md         # 能力边界矩阵（哪些事插件做不到）
+│   ├── adr/                         # 架构决策记录
+│   ├── archive/                     # 历史计划与调研（不作现行依据）
+│   └── skills/                      # 可复用 AI skill（按需自建）
+├── scripts/check-fast.sh            # 快速门禁：本地 pre-commit 与 CI 共用同一份断言
+├── .githooks/pre-commit             # 提交前门禁（需 git config core.hooksPath .githooks）
 ├── src/                             # 源码（TypeScript，构建后打包进 dist/）
 │   ├── entry/                       # 五个插件入口，各自对应一个独立 QuickJS 上下文
 │   │   ├── resolver.ts              # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
@@ -137,26 +160,19 @@
 │   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
 │   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts adrules.ts probe.ts ...
 │   └── types.ts                     # 内部共享类型
-├── tests/
-│   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（不参与构建）
+├── tests/                           # 四层测试，共用 tests/parity/harness.mjs 的假宿主
+│   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（冻结，不参与构建）
 │   ├── parity.mjs                   # 行为比对器：同一批 fixture 分别喂给 legacy 与 dist
 │   ├── parity/scenarios.mjs         # 67 个 fixture（直链 / 播放页 / 剧集 / DASH / 鉴权 / 订阅 / 钩子）
 │   ├── parity/face.mjs              # 请求面同义归并：extraHeaders 与 request 补丁比「最终生效值」
-│   ├── parity/harness.mjs           # 假宿主（日志 / 宿主调用 / 返回值三路记录），四个测试共用
+│   ├── parity/harness.mjs           # 假宿主（日志 / 宿主调用 / 返回值三路记录）
 │   ├── contract.mjs                 # 请求面契约：凭据只走 originHeaders、Basic 编码、rangeCap 区间
-│   ├── intercept.mjs                # M3 拦截器契约：成对丢弃、密钥边界、不丢空、归属判定
-│   └── postprocess.mjs              # M4 后处理契约：产物登记、容器探测、探测失败必须回退
+│   ├── intercept.mjs                # 拦截器契约：成对丢弃、密钥边界、不丢空、归属判定
+│   └── postprocess.mjs              # 后处理契约：产物登记、容器探测、探测失败必须回退
 ├── dist/                            # ← 构建产物 = 插件本体（「从目录安装」指向此目录；不入库）
 ├── adfilter/                        # 早期本地去广告清洗服务（独立进程）—— 已归档，v2.1.0 起由拦截器取代
-├── docs/
-│   ├── configuration.md             # 配置说明：27 个设置项的作用 / 配置 / 效果 / 示例
-│   ├── plugin-capability-matrix.md  # 插件能力边界（已对照官方 API 核实）
-│   ├── sdk-migration-plan.md        # 插件系统换代（v0.5.8）后的 SDK 迁移方案与里程碑
-│   ├── dash-discovery-plan.md       # v1.8.0 DASH 发现层开发计划（含遗留验证收口）
-│   ├── ad-removal-notes.md          # 去广告方案调研笔记（源码级论证 / 实测 / TODO）
-│   ├── upstream-m3u8-rs-method-none.md        # METHOD=NONE 上游缺陷的证据链与 PR 状态
-│   ├── upstream-m3u8-rs-method-none.patch     # 上游 m3u8-rs 修复补丁（可 patch -p1）
-│   └── engine-hls-ext-x-key-method-none.patch # 引擎侧兜底补丁（可 patch -p1）
+├── docs/configuration.md            # 使用者文档：27 个设置项的作用 / 配置 / 效果 / 示例
+├── .github/workflows/build.yml      # CI：门禁 + 类型检查 + 构建 + 校验 + 四层测试 + CHANGELOG/发版守卫
 ├── LICENSE
 └── README.md
 ```
@@ -169,15 +185,17 @@
 ## 开发
 
 ```bash
-npm ci            # 安装依赖（fluxdown-plugin-sdk + typescript）
-npm run typecheck # 类型检查：tsc --noEmit
-npm run build     # 构建 → dist/（含 manifest.json 拷贝）
-npm run validate  # 校验 manifest 与产物是否符合插件规范（装机前跑）
-npm run parity    # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场景比对；有意改行为的场景用 diverges 声明
-npm run contract  # 请求面契约：凭据只走 originHeaders、Basic 的 UTF-8 编码、凭据不落库
-npm run intercept # 拦截器契约：成对丢弃、不跨密钥边界、不丢空、只碰本插件任务
+npm ci              # 安装依赖（fluxdown-plugin-sdk + typescript）
+npm run typecheck   # 类型检查：tsc --noEmit
+npm run build       # 构建 → dist/（含 manifest.json 拷贝）
+npm run validate    # 校验 manifest 与产物是否符合插件规范（装机前跑）
+npm test            # 四层测试串联，等价于下面四条依次执行
+npm run parity      # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场景比对；有意改行为的场景用 diverges 声明
+npm run contract    # 请求面契约：凭据只走 originHeaders、Basic 的 UTF-8 编码、凭据不落库
+npm run intercept   # 拦截器契约：成对丢弃、不跨密钥边界、不丢空、只碰本插件任务
 npm run postprocess # 后处理契约：产物登记、ffprobe 判容器、探测失败退回扩展名判断
-npm run pack      # 打包 .fxplug
+npm run pack        # 打包 .fxplug
+./scripts/check-fast.sh  # 结构门禁：文档路由表、AGENTS 行数、CHANGELOG 条目、版本号一致、空白与冲突标记
 ```
 
 - **改行为前先跑 `npm run parity`**：它是重构的安全网 —— 任何「以为等价、实际不等价」的改动都会落到具体场景与字段上。
@@ -185,6 +203,14 @@ npm run pack      # 打包 .fxplug
   声明，比对器把它算作已知差异并打印首个不同点；一旦声明过而实际不再有差异，比对器会报「豁免过期」。
 - **有意改变的行为要进 `contract` 而不是改 parity**：parity 比的是「与 v1.8.0 等价」，contract 断言的是「现在应该是什么样」。凭据作用域从「全部主机」收窄到「登记 origin」就属于后者 —— parity 里比的是最终生效值，作用域差异由 contract 单独断言。
 - 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT）：产物里不含 SDK 运行时，授权链保持干净。
+
+## 开发约定
+
+- 分支：`master` 为默认分支，功能走 `feature/<名称>`。提交前装一次钩子：`git config core.hooksPath .githooks`。
+- 提交与本地检查：见 [CONTRIBUTING.md](CONTRIBUTING.md)；AI 编码助手的规则与红线见 [AGENTS.md](AGENTS.md)。
+- 功能状态与验收标准：见 [ROADMAP.md](ROADMAP.md)；改动记进 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]`。
+- 文档分层：使用者文档放 `docs/`，工程文档放 `.agents/` —— 判据只有一条「不读它 AI 会做错事吗」。
+- 第三方依赖的许可证登记在 [THIRD-PARTY.md](THIRD-PARTY.md)；SDK 只以 `import type` 引用（AGPL 与 MIT 的隔离，见 ADR-0003）。
 
 ## 许可证
 

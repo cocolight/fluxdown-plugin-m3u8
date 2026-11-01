@@ -1,9 +1,47 @@
-# 统一行尾：入库与各平台检出一律 LF，避免 Windows / Linux 检出结果不一致
+# 换行与文本/二进制判定。库内一律以 LF 存储，避免在 Windows（core.autocrlf=true）
+# 检出后 shell 脚本变成 CRLF —— 那会让 shebang 失效（#!/bin/sh^M: bad interpreter）。
+
+# 默认：文本自动判定，检出为 LF
 * text=auto eol=lf
 
-# 二进制文件不做行尾与文本转换
+# 脚本必须 LF
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.zsh   text eol=lf
+
+# Windows 专属文件需要 CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 无扩展名或易被误判的文本文件，显式声明
+LICENSE         text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+Dockerfile      text eol=lf
+Makefile        text eol=lf
+
+# 二进制：禁止换行转换与文本 diff
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.icns   binary
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.zip    binary
+*.gz     binary
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.dylib  binary
+*.lib    binary
+*.a      binary
+
+# 插件发布包
 *.fxplug binary
-*.exe     binary
-*.png     binary
-*.jpg     binary
-*.ico     binary

@@ -9,6 +9,10 @@
 >
 > **核对日期**：2026-11-01 ｜ 官方文档 `website-v2`（`/docs/zh/plugins/*`）｜ 客户端最新稳定版 `v0.6.5`（`v0.6.6-rc.1` 在测）
 > ｜ SDK `fluxdown-plugin-sdk@0.5.0`（npm，2026-10-31 发布）
+>
+> **路径说明**：本文写于迁移当时，文中出现的 `docs/...` 是当时的路径。工程文档现已迁到 `.agents/`
+> （`capability-matrix.md`、`archive/ad-removal-notes.md`、`archive/dash-discovery-plan.md`），
+> `docs/` 只留使用者文档。历史记录按原样保留，不回溯改写。
 
 ---
 
