@@ -4,8 +4,8 @@
  * 为什么不能靠 parity：M2 有几处**有意**改变的行为（凭据不再写进 `extraHeaders`、跨站凭据
  * 连补丁都不生成），逐字比对必然报红。这些改变的正确性要由本文件直接断言：
  *
- *   1. 凭据只经 `originHeaders` 下发，且只针对登记 origin —— 不再有「跟着分片发给 CDN」的面。
- *   2. 跨站凭据整条不注入，并留一条可诊断的日志。
+ *   1. 凭据只经 `originHeaders` 下发，且只针对任务 URL 的 origin —— 不再有「跟着分片发给 CDN」的面。
+ *   2. 目标与任务 URL 不同源时整条不注入，并留一条可诊断的日志。
  *   3. Basic 的 Authorization 对非 ASCII 用户名正确（v1.8.0 手写编码器的回归保护）。
  *   4. Referer 三级优先级与 v1.8.0 一致，且落在 `referrer` 字段而非同名头。
  *   5. User-Agent 落在 `userAgent` 字段，不在 `setHeaders`。
@@ -16,6 +16,7 @@
  *
  * 用法：npm run contract        （需先 npm run build）
  */
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { credentialScope } from "./parity/face.mjs";
@@ -27,7 +28,6 @@ const DIST = process.env.CONTRACT_DIST || join(ROOT, "dist");
 
 const SITE = "https://site.test";
 const CDN = "https://cdn.site.test";
-const OAUTH_REF = "m3u8-resolver@cocolight::https://site.test";
 
 const MASTER = [
   "#EXTM3U",
@@ -93,19 +93,19 @@ async function resolveOnce(sc) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 同源凭据 → originHeaders，且不再有 extraHeaders
+// 1. 凭据 → originHeaders，且不再有 extraHeaders
 // ---------------------------------------------------------------------------
 {
   const r = await resolveOnce({
-    profiles: { [OAUTH_REF]: { site: CDN, kind: "cookie", cookies: "sid=abc; uid=9" } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    settings: { authCookie: "sid=abc; uid=9" },
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
   });
   const out = r.result;
 
   check("凭据：结果里没有 extraHeaders（单一来源）", () =>
     out.extraHeaders === undefined ? true : `仍返回 extraHeaders: ${show(out.extraHeaders)}`);
 
-  check("凭据：originHeaders 只有一个 origin，且等于登记站点", () =>
+  check("凭据：originHeaders 只有一个 origin，且等于任务 URL 的 origin", () =>
     eq(out.request && out.request.originHeaders && out.request.originHeaders.map((o) => o.origin), [CDN]));
 
   check("凭据：Cookie 值原样进入该 origin 的头表", () =>
@@ -118,23 +118,35 @@ async function resolveOnce(sc) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. 跨站凭据 → 整条不注入 + 可诊断日志
+// 2. 目标与任务 URL 不同源 → 整条不注入 + 可诊断日志
+//    （清单在站内、实际文件在 CDN：最常见的形态，也是这层闸存在的理由）
 // ---------------------------------------------------------------------------
+const PAGE = `<!doctype html>
+<html><head><title>测试影片 - 某站</title></head>
+<body><div id="app"></div>
+<script>var player={"url":"${CDN}/hls/master.m3u8?sign=abc&t=1"};</script>
+</body></html>`;
+
 {
   const r = await resolveOnce({
-    profiles: { [OAUTH_REF]: { site: SITE, kind: "cookie", cookies: "sid=abc" } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    // 播放页解析需要 targetHosts 圈定目标站点（页面路径不靠扩展名判定，见 resolver 的 host 闸）
+    settings: { targetHosts: "site.test", authCookie: "sid=abc" },
+    routes: {
+      [`${SITE}/watch/123`]: { body: PAGE },
+      [`${CDN}/hls/master.m3u8?sign=abc&t=1`]: { body: MASTER },
+    },
+    invoke: (e) => e.resolve(ctxOf(`${SITE}/watch/123`)),
   });
   const out = r.result;
   const logs = r.logs.map((l) => l.join(" ")).join("\n");
 
-  check("跨站凭据：不生成 originHeaders", () =>
+  check("跨源凭据：不生成 originHeaders", () =>
     out.request && out.request.originHeaders === undefined ? true : `仍生成 ${show(out.request && out.request.originHeaders)}`);
 
-  check("跨站凭据：日志说明「不同源」", () =>
+  check("跨源凭据：日志说明「不同源」", () =>
     /不同源，未注入/.test(logs) ? true : `日志里没有该提示：${show(logs.slice(0, 200))}`);
 
-  check("跨站凭据：Cookie 不出现在任何下发头里", () => {
+  check("跨源凭据：Cookie 不出现在任何下发头里", () => {
     const dump = JSON.stringify(out);
     return dump.indexOf("sid=abc") === -1 ? true : "凭据泄漏进了返回值";
   });
@@ -145,8 +157,8 @@ async function resolveOnce(sc) {
 // ---------------------------------------------------------------------------
 {
   const r = await resolveOnce({
-    profiles: { [OAUTH_REF]: { site: CDN, kind: "basic", username: "用户", password: "p@ss" } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    settings: { authCookie: "basic:用户:p@ss" },
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
   });
   const oh = (r.result.request && r.result.request.originHeaders) || [];
   const h = (oh[0] && oh[0].headers) || {};
@@ -203,15 +215,28 @@ async function resolveOnce(sc) {
 // ---------------------------------------------------------------------------
 {
   const r = await resolveOnce({
-    settings: { extraHeadersRaw: "Cookie: manual=1" },
-    profiles: { [OAUTH_REF]: { site: CDN, kind: "cookie", cookies: "sid=abc" } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    settings: { extraHeadersRaw: "Cookie: manual=1", authCookie: "sid=abc" },
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
   });
   const p = r.result.request;
 
   check("优先级：用户手写的 Cookie 进 setHeaders", () => eq(p.setHeaders.Cookie, "manual=1"));
-  check("优先级：档案里的 Cookie 不再覆盖用户值", () =>
+  check("优先级：凭据里的 Cookie 不再覆盖用户值", () =>
     p.originHeaders === undefined ? true : `仍注入 ${show(p.originHeaders)}`);
+}
+
+// ---------------------------------------------------------------------------
+// 6b. 多行请求头形式的凭据：逐条注入，且同样让位给用户显式值
+// ---------------------------------------------------------------------------
+{
+  const r = await resolveOnce({
+    settings: { authCookie: "X-Token: from-setting\nX-Play: 1", extraHeadersRaw: "X-Token: manual" },
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
+  });
+  const oh = (r.result.request.originHeaders || [])[0] || { headers: {} };
+
+  check("多行凭据：只注入用户没写的那个头", () =>
+    eq(oh.headers, { "X-Play": "1" }));
 }
 
 // ---------------------------------------------------------------------------
@@ -219,8 +244,8 @@ async function resolveOnce(sc) {
 // ---------------------------------------------------------------------------
 {
   const r = await resolveOnce({
-    profiles: { [OAUTH_REF]: { site: CDN, kind: "basic", username: "用户", password: "p@ss" } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    settings: { authCookie: "basic:用户:p@ss" },
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
   });
   const writes = r.calls.filter((c) => c[0] === "storage.set");
 
@@ -254,7 +279,7 @@ async function resolveOnce(sc) {
     invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
   });
   const p = r.result.request;
-  check("防盗链：无 authRef 时仍给出 Referer 与 Origin", () =>
+  check("防盗链：未填凭据时仍给出 Referer 与 Origin", () =>
     eq([typeof p.referrer === "string" && p.referrer.length > 0, p.setHeaders && p.setHeaders.Origin], [true, CDN]));
   check("防盗链：无凭据时时不生成 originHeaders", () =>
     p.originHeaders === undefined ? true : `出现了 ${show(p.originHeaders)}`);
@@ -274,6 +299,18 @@ async function resolveOnce(sc) {
 
   const on = await resolveOnce({ settings: { rangeCapKb: 4096 }, invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)) });
   check("Range 上限：4096 KiB 换算成 4194304 字节", () => eq(on.result.request.maxRangeBytes, 4194304));
+}
+
+// ---------------------------------------------------------------------------
+// 11. 登录入口已移除（凭据只剩「设置项直供」这一条路）
+// ---------------------------------------------------------------------------
+{
+  const m = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
+  check("登录：manifest 不再声明 auth 段", () => (m.auth === undefined ? true : `仍声明 ${show(m.auth)}`));
+  check("登录：permissions 不含 auth", () =>
+    (m.permissions || []).indexOf("auth") < 0 ? true : `仍要 ${show(m.permissions)}`);
+  check("登录：产物里没有 auth.js", () =>
+    existsSync(join(DIST, "auth.js")) ? "dist/auth.js 仍在" : true);
 }
 
 console.log(`\n${pass}/${pass + fail} 项契约通过`);

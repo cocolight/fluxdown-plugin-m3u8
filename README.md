@@ -91,15 +91,15 @@
 4. 请求面以 `request` 补丁返回（v2.0.0）：`referrer`（优先播放页 URL）、`userAgent`、`setHeaders`（`Origin` + 自定义头）；若该站点存有登录凭据且**下载目标与其同源**，另附 `originHeaders`（`Cookie`/`Authorization` 等，只对该 origin 的请求生效）。同时标记 `rangeSupported` 以启用多线程分段。
 5. 下载完成后 `src/entry/hooks.ts` 的 `onDone`：先用 ffprobe 读真实容器（v2.2.0），已是 MP4 家族或无视频轨就不动；否则核心合并失败时用 ffmpeg 补合并、开启 remux 时无损转封装为 `.mp4`。写出的产物随即登记为任务的衍生产物（`flux.task.recordArtifact`），删任务时一并删除。
 6. `onError` / `onCancel` 记录失败原因、清理任务标记。**钩子只对本插件经手的任务生效** —— resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/lib/handled.ts` 文件头）。
-7. 另有三个独立入口：`src/entry/auth.ts` 的 `authenticate(ctx)` 处理登录（由宿主以 `begin`/`poll`/`cancel`/`logout`/`status` 驱动）；`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举；`src/entry/intercept.ts` 的 `intercept(ctx)` 在 `segments` 阶段决定要不要丢弃广告分片（v2.1.0，默认关）。五者构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
+7. 另有两个独立入口与一个常驻入口：`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举；`src/entry/intercept.ts` 的 `intercept(ctx)` 在 `segments` 阶段决定要不要丢弃广告分片（v2.1.0，默认关）；`src/entry/main.tsx` 被求值一次，注册设置页签。它们构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
 
 ## 安全与隐私
 
 - 插件只在你配置的「目标站点主机」或直链 `.m3u8` 上生效，不会处理无关页面（fail-closed）。订阅源的地址由你在订阅列表里显式添加。
 - 插件存储里只写入两类数据，**都不含任何 Cookie、Token 或凭据**：① 「本插件经手的任务 ID → 时间戳」标记（单键、上限 300 条、6 小时后自动过期；v2.1.0 起拦截器也靠它判断归属，故上限由 60 调高）；② 剧集批量下载的清单条目映射（单键、上限 400 条；仅在条目 URL 过长或含 `@` 时才落盘），用于二段解析取回地址。
-- **登录凭据不落在插件存储里**：v1.6.0 起凭据经 `flux.auth` 交给 FluxDown 统一持久化（与站点绑定、按 `插件ID::站点` 引用），卸载插件即可一并清除；插件只在运行时读回使用。
+- **凭据只发给任务地址的同源请求**：登录凭据存在插件自己的设置项里，注入前逐次比对 origin —— 清单在站内、分片在 CDN 时，Cookie 不会跟着发给 CDN。v3.0.0 起不再使用宿主的按站点登录对话框（那个模型要求先填一个站点，与本插件对所有站点生效的定位相冲突）。
 - **拦截器只看分片表，不外发任何数据（v2.1.0）**：`intercept` 只在 `segments` 阶段被调用，拿到的是一条轨道的分片元数据（地址、时长、标签、密钥信息）。判定是**纯本地计算** —— 不发网络请求、不写存储、不上报；返回的只是「丢弃哪几片」的 id 列表。关闭该功能时连任务标记都不读。
-- **凭据只对登记站点生效（v2.0.0 起由引擎按 origin 白名单强制）**：插件把凭据放进 `request.originHeaders`，只有 `scheme://host[:port]` 与「凭据登记站点」**完全一致**的请求才会附加 —— 清单在站内、分片在 CDN 的混合场景下，Cookie 不会跟着分片请求发出去。插件侧仍保留一道同源检查（不一致即整条不注入并记日志），两层叠加。用户手写在「额外请求头」里的内容属显式声明，不受该限制。
+- **凭据只进 `originHeaders`，不进全局头表**：插件把凭据放进 `request.originHeaders`，引擎只对 `scheme://host[:port]` **完全一致**的请求附加 —— 清单在站内、分片在 CDN 的混合场景下，Cookie 不会跟着分片请求发出去。插件侧另有一道同源检查（不一致即整条不注入并记日志），两层叠加。用户手写在「额外请求头」里的内容属显式声明，不受该限制。
 - **下载请求头每次运行重放、不进任务记录（v2.0.0）**：`request` 补丁由官方语义保证「每次运行重放、绝不落库」，一次性签名链接与临时 Cookie 不会被写进任务数据库。
 - **防抓页 Cookie 只存在于单次解析的内存里**（v1.7.0）：解开挑战得到的 Cookie 仅用于本次解析内重取页面，**不写入插件存储、不落盘**，解析结束即随上下文丢弃。
 - `onDone` 的 remux 仅对白名单容器（`ts`/`mkv`/`webm`/`flv`/`m4v`/`mov`/`m2ts`/`mpeg`/`mpg`/`ogv`）生效，避免误转 `.zip`/`.pdf`。v2.2.0 起白名单只是**候选集**：真正转不转由 ffprobe 的容器结论决定，探测不可用时退回按扩展名判断（与旧版逐字一致）。
@@ -152,14 +152,14 @@
 ├── scripts/check-fast.sh            # 快速门禁：本地 pre-commit 与 CI 共用同一份断言
 ├── .githooks/pre-commit             # 提交前门禁（需 git config core.hooksPath .githooks）
 ├── src/                             # 源码（TypeScript，构建后打包进 dist/）
-│   ├── entry/                       # 六个入口：五个无状态（每次调用全新上下文）+ main（常驻）
+│   ├── entry/                       # 五个入口：四个无状态（每次调用全新上下文）+ main（常驻）
 │   │   ├── resolver.ts              # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
 │   │   ├── hooks.ts                 # 钩子：onDone（容器探测 → 轨对合并兜底 / remux → 登记产物）、onError、onCancel（清标记）
-│   │   ├── auth.ts                  # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
 │   │   ├── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
 │   │   ├── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
 │   │   └── main.tsx                 # 常驻脚本：注册设置页签「去广告规则」视图（contributes.views，JSX）
 │   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
+│   │   ├── credential.ts            # 登录凭据文本 → 请求头（bearer / basic / 多行头 / Cookie）
 │   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts adrules.ts probe.ts ...
 │   │   ├── rulecheck.ts             # 设置页的规则校验（与 adrules 同源，不另写判定）
 │   │   ├── adpresets.ts             # 设置页的五档规则预设（不内置站点名单）
@@ -183,7 +183,7 @@
 ```
 
 > **插件本体是构建产物 `dist/` 目录。** `manifest.json` 位于仓库根，构建时原样拷入 `dist/`；
-> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `auth.js` / `subscribe.js` / `intercept.js` / `main.js`）。
+> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `subscribe.js` / `intercept.js` / `main.js`）。
 > 构建后这些脚本仍是**彼此独立的上下文**，运行时不能互相引用；
 > 源码侧可以正常 `import`，共享逻辑由构建期打包进各入口（代价是同一模块会在多个产物里各存一份）。
 

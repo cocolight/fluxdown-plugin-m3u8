@@ -470,35 +470,31 @@ export const scenarios = [
   },
 
   // ======================= resolver：凭据注入 =======================
+  // 凭据来源从「登录档案（ctx.authRef → flux.auth）」改为设置项 authCookie 直供，
+  // 因此这三条与 v1.8.0 的基线必然不同 —— 差异本身由 contract.mjs 逐条断言形状。
   {
-    name: "resolver：同源凭据（cookie）注入 extraHeaders",
+    name: "resolver：同源凭据（cookie）直供 originHeaders",
     entry: "resolver",
-    settings: {},
-    profiles: {
-      [OAUTH_REF]: { site: "https://cdn.site.test", kind: "cookie", cookies: "sid=abc; uid=9" },
-    },
+    settings: { authCookie: "sid=abc; uid=9" },
     routes: { [`${CDN}/hls/master.m3u8`]: { body: MASTER_MIXED } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
+    diverges: "凭据改由 authCookie 直供，且不再写 extraHeaders",
   },
   {
-    name: "resolver：跨站凭据（站点不同源）→ 不注入并记日志",
+    name: "resolver：目标不同源 → 不注入并记日志",
     entry: "resolver",
-    settings: {},
-    profiles: {
-      [OAUTH_REF]: { site: "https://site.test", kind: "cookie", cookies: "sid=abc" },
-    },
-    routes: { [`${CDN}/hls/master.m3u8`]: { body: MASTER_MIXED } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    settings: { authCookie: "sid=abc" },
+    routes: { [`${CDN}/hls/master.m3u8`]: { body: MASTER_MIXED }, [`${SITE}/play/1`]: { body: "<html></html>" } },
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
+    diverges: "凭据归属站点取自任务 URL，同源判定口径随来源一并改变",
   },
   {
-    name: "resolver：basic 凭据 → 手写 base64 的 Authorization",
+    name: "resolver：basic 凭据 → base64 的 Authorization",
     entry: "resolver",
-    settings: {},
-    profiles: {
-      [OAUTH_REF]: { site: "https://cdn.site.test", kind: "basic", username: "用户", password: "p@ss" },
-    },
+    settings: { authCookie: "basic:用户:p@ss" },
     routes: { [`${CDN}/hls/master.m3u8`]: { body: MASTER_MIXED } },
-    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`, { authRef: OAUTH_REF })),
+    invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)),
+    diverges: "凭据改由 authCookie 直供，Authorization 改走 originHeaders",
   },
   {
     name: "resolver：extraHeadersRaw + userAgent + 任务 extraHeaders 的优先级",
@@ -570,101 +566,11 @@ export const scenarios = [
       e.subscribe({ providerId: "m3u8play", sourceId: "s1", url: `${SITE}/list`, providerConfig: "", cookies: "", userAgent: "" }),
   },
 
-  // ======================= auth =======================
-  {
-    name: "auth：status 未登录",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "status", site: SITE, authRef: OAUTH_REF, sessionId: "", input: "" }),
-  },
-  {
-    name: "auth：status 已登录（未过期）",
-    entry: "auth",
-    settings: {},
-    profiles: { [OAUTH_REF]: { site: SITE, kind: "cookie", cookies: "a=1", expiresAt: future } },
-    invoke: (e) => e.authenticate({ action: "status", site: SITE, authRef: OAUTH_REF, sessionId: "", input: "" }),
-  },
-  {
-    name: "auth：status 档案已过期 → 视为未登录",
-    entry: "auth",
-    settings: {},
-    profiles: { [OAUTH_REF]: { site: SITE, kind: "cookie", cookies: "a=1", expiresAt: past } },
-    invoke: (e) => e.authenticate({ action: "status", site: SITE, authRef: OAUTH_REF, sessionId: "", input: "" }),
-  },
-  {
-    name: "auth：begin 粘贴 Cookie 原文",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "begin", site: SITE, authRef: "", sessionId: "s1", input: "sid=abc; uid=9" }),
-  },
-  {
-    name: "auth：begin 粘贴 bearer 令牌",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "begin", site: SITE, authRef: "", sessionId: "s1", input: "bearer:tok_123" }),
-  },
-  {
-    name: "auth：begin 粘贴 basic 用户名密码",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "begin", site: SITE, authRef: "", sessionId: "s1", input: "basic:用户名:p@ss" }),
-  },
-  {
-    name: "auth：begin 粘贴多行请求头",
-    entry: "auth",
-    settings: {},
-    invoke: (e) =>
-      e.authenticate({
-        action: "begin",
-        site: SITE,
-        authRef: "",
-        sessionId: "s1",
-        input: "Cookie: a=1; b=2\nX-Token: zzz",
-      }),
-  },
-  {
-    name: "auth：begin 无输入 → 进入交互态",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "begin", site: SITE, authRef: "", sessionId: "s1", input: "" }),
-  },
-  {
-    name: "auth：begin 无输入且无站点 → 提示缺少站点",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "begin", site: "", authRef: "", sessionId: "s1", input: "" }),
-  },
-  {
-    name: "auth：begin 无输入但设置里存了 authCookie → 直接保存",
-    entry: "auth",
-    settings: { authCookie: "bearer:from_settings" },
-    invoke: (e) => e.authenticate({ action: "begin", site: SITE, authRef: "", sessionId: "s1", input: "" }),
-  },
-  {
-    name: "auth：poll 已有档案 → 直接成功",
-    entry: "auth",
-    settings: {},
-    profiles: { [OAUTH_REF]: { site: SITE, kind: "cookie", cookies: "a=1" } },
-    invoke: (e) => e.authenticate({ action: "poll", site: SITE, authRef: OAUTH_REF, sessionId: "s1", input: "" }),
-  },
-  {
-    name: "auth：logout → 删除凭据",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "logout", site: SITE, authRef: OAUTH_REF, sessionId: "", input: "" }),
-  },
-  {
-    name: "auth：cancel",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "cancel", site: SITE, authRef: "", sessionId: "s1", input: "" }),
-  },
-  {
-    name: "auth：未知 action",
-    entry: "auth",
-    settings: {},
-    invoke: (e) => e.authenticate({ action: "weird", site: SITE, authRef: "", sessionId: "", input: "" }),
-  },
+  // ======================= auth（已移除） =======================
+  // v3.0.0 起不再声明 auth 入口：宿主的登录对话框是**按站点**登录的，而本插件是对所有站点
+  // 生效的通用解析器，两者模型不匹配（站点填不对就只能得到一句「请填写站点后再登录」）。
+  // 凭据改由设置项 authCookie 直供，形状由 contract.mjs 断言；manifest 不再含 auth 段
+  // 这件事同样由 contract.mjs 断言，而不是留一堆必然报红的场景在这里。
 
   // ======================= hooks =======================
   {

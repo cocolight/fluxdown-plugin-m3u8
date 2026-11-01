@@ -83,7 +83,7 @@
 | 伪 m3u8（HTML 登录页 / 拦截页）识别 | 当成视频下载 → 得到一个 HTML | `#EXTM3U` 校验 + HTML 特征识别 → 可自动切 yt-dlp 兜底 | `htmlFallbackYtdlp` | **独占** |
 | 复杂前端（m3u8 藏在 JS / 加密 JSON） | 无 | `flux.ytdlp` 委派抽直链 | `useYtdlp` | **独占** |
 | **剧集页批量下载** | 无（一页 N 集只能一集一集贴） | 返回 `manifest` 清单，**引擎**自动裂变为任务组；二段以 `resolverItem` 回调取单直链（`v1.5.0`） | `detectSeries`（+ `manifestMinItems` / `manifestMaxItems` / `episodeLinkPattern`） | **独占** |
-| **登录凭据** | 无 | `auth` 入口把 Cookie / Bearer / Basic / 自定义头交宿主持久化，并**由插件并进 `request.originHeaders`**（宿主只在 `flux.fetch` 内注入，下载链路须插件补齐；v2.0.0 起按 origin 白名单强制）（`v1.6.0`） | `authCookie` | **独占** |
+| **登录凭据** | 无 | 设置项 `authCookie` 存 Cookie / Bearer / Basic / 自定义头，插件解析后并进 `request.originHeaders`，并用于自身抓取（`v1.6.0` 起；`v3.0.0` 起不再走宿主 `auth` 入口与按站点凭据库，见 ADR-0006） | `authCookie` | **独占** |
 | **订阅追更** | 内置仅 RSS，无插件订阅 | `subscribe` provider 枚举列表页 → feed，引擎按 `guid` 去重建任务（`v1.6.0`） | 订阅源（`providerId = m3u8play`） | **独占** |
 | **防抓页 Cookie 挑战** | 无 | 解出挑战页种下的 Cookie，对**同一地址重取一次**（`v1.7.0`） | `solveChallenge` | **独占** |
 | **内嵌播放器跟随** | 无 | 取 `<iframe src>`（同站优先）或 maccms `player_data.link` 兜底 → 跟进解析（`v1.7.0`） | `followIframe`、`iframeMaxFollow` | **独占** |
@@ -141,5 +141,5 @@
 
 ★ **`minAppVersion` 救不了旧版**：manifest 为 `deny_unknown_fields` —— 旧版 FluxDown 见到 `multi` / `subscriptions` / `auth` 会**拒绝整份 manifest**（表现为插件被跳过，而非忽略该字段）。`minAppVersion` 是在 **serde 解析成功之后**才检查的，此时旧版早已解析失败。因此：
 
-- 门槛只能**按能力分设并逐版抬高**，且**不可回落** —— v1.7.0 虽然没引入新字段，但 manifest 里仍带着 `auth` / `subscriptions` 段，门槛必须跟着 v1.6.0 留在 `0.4.8`；
+- 门槛只能**按能力分设并逐版抬高**，且**不可回落** —— v1.7.0 虽然没引入新字段，但 manifest 里仍带着 `auth` / `subscriptions` 段，门槛必须跟着 v1.6.0 留在 `0.4.8`；v3.0.0 删掉了 `auth` 段，门槛同样**不因此下调**（拦截器与 `maxRangeBytes` 已把门槛推到 `0.6.0`）；
 - 这些字段属引擎契约，存在随版本变动的风险，落地时须绑定实际安装版本复验。
