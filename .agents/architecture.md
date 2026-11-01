@@ -15,7 +15,6 @@
 | `tests/legacy/` | v1.8.0 的四个 `.js` 原文件，冻结基线，不参与构建 |
 | `tests/` | 五层测试：parity / contract / intercept / postprocess / ui |
 | `dist/` | 构建产物 = 插件本体（「从目录安装」指向此目录），不入库 |
-| `adfilter/` | 已归档的本地去广告清洗服务，不参与构建，见根 README「已停用」节 |
 | `docs/` | 只放使用者文档 |
 | `.agents/` | 工程协作文档，AI 与人共读 |
 | `scripts/` | 辅助脚本，含 `check-fast.sh` 快速门禁 |

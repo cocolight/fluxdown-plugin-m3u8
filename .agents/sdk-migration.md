@@ -121,10 +121,12 @@ fluxdown-plugin-m3u8/
 | `entry/auth.ts` | `auth.js:127-206` | 不变逻辑，只是换壳 |
 | `entry/subscribe.ts` | `subscribe.js:182-249` | 复用 `lib/listing.ts` |
 | `entry/intercept.ts` | **新增** | 去广告 / 请求补丁 / 后处理（见 §6） |
-| `lib/rules/adrules.ts` | 从 `adfilter/ad_patterns.txt` 与 `docs/ad-removal-notes.md` 提炼 | 纯函数，`segments` 阶段内联执行（5 秒预算内） |
+| `lib/rules/adrules.ts` | 从已删除的 `adfilter/ad_patterns.txt` 与 `.agents/archive/ad-removal-notes.md` 提炼 | 纯函数，`segments` 阶段内联执行（5 秒预算内） |
 
-`adfilter/` 目录的去留：服务端方案退役（`README.md:107-111`），但 `ad_patterns.txt` 里的域名/路径特征
-可作为**规则种子**迁进 `lib/rules/adrules.ts`。
+`adfilter/` 目录的去留：**已删除（v3.0.0）**。服务端方案退役后它就没有任何调用方 ——
+manifest 无对应设置项、构建配置无对应入口、测试无引用，只是历史实现的存档。迁移需要的
+域名/路径特征早已迁进 `lib/rules/adrules.ts`（`AD_WORDS` / `AD_STEM` / `AD_DIR`），
+目录留着只会让后来者以为还有一条可用的旁路。需要读旧实现时用 `git log --diff-filter=D -- adfilter/`。
 
 ---
 
@@ -214,7 +216,7 @@ resolve(ctx)                    prepare   → RequestPatch（URL/头/Cookie/UA/�
 
 | 维度 | 旧方案（v1.4.3 前，已停用） | 新方案（拦截器 `segments`） |
 | --- | --- | --- |
-| 实现位置 | 本地 Python 清洗服务（`adfilter/`） | 插件进程内纯函数 |
+| 实现位置 | 本地 Python 清洗服务（`adfilter/`，v3.0.0 已删除） | 插件进程内纯函数 |
 | 依赖 | 需另起 HTTP 服务 + 用户配端口 | 零依赖 |
 | 失败模式 | 服务没起 → 下载失败或整条走原链 | fail-closed：返回 `null` 则完全按原样下载 |
 | 分片地址 | 需自行绝对化后回写 | 引擎已解析好，只需给 `drop` 的 id 列表 |
@@ -259,7 +261,7 @@ defineInterceptors({
 规则来源建议三级：
 - `adRulesMode: "off" | "marker" | "heuristic"`（marker 只看 CUE/dateRange，最保守；heuristic 叠加时长/命名特征）；
 - `adRulesExtra: string`（多行 JSON，站点级白名单/黑名单，如 `{"dropHosts":["ads.cdn.com"],"keepPath":["/ep\\d+/"]}`）；
-- 内置种子表（从 `adfilter/ad_patterns.txt` 提炼，TS 常量，不落盘）。
+- 内置种子表（从已删除的 `adfilter/ad_patterns.txt` 提炼，TS 常量，不落盘）。
 
 ### 6.3 `prepare` 还是 `request`？
 

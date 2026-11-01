@@ -122,7 +122,7 @@
 
 ## 已停用：本地源头去广告（v1.4.3 – v2.0.0）
 
-插件曾支持「下载前把 playlist 改写为指向本地清洗服务的地址，由服务剔掉广告段」（旧称「增强 C」）。**自 v1.4.3 起该能力整体停用**：`adClean` / `adCleanServer` 两个设置项已从 manifest 移除，resolver 不再改写任何返回的 URL；`adfilter/` 目录保留在仓库中但**不再维护**，与插件之间已无任何对接通道。
+插件曾支持「下载前把 playlist 改写为指向本地清洗服务的地址，由服务剔掉广告段」（旧称「增强 C」）。**自 v1.4.3 起该能力整体停用**：`adClean` / `adCleanServer` 两个设置项已从 manifest 移除，resolver 不再改写任何返回的 URL；`adfilter/` 目录自 v3.0.0 起已从仓库删除（实现可回溯：`git log --diff-filter=D -- adfilter/`），插件与它之间从来没有运行时依赖。
 
 **v2.1.0 起改用引擎的拦截平面重做**（见上文「分片级去广告」设置项）：不再需要外部进程，插件拿到的是引擎已解析好的分片表，只需返回要丢的 id 列表。旧的「增强 C」源码仍作为回归基线保存在 `tests/legacy/resolver.js`，仅作历史参考 —— **不要**再恢复它。历史方案论证与实测数据见 [`.agents/archive/ad-removal-notes.md`](.agents/archive/ad-removal-notes.md)。
 
@@ -175,7 +175,6 @@
 │   ├── postprocess.mjs              # 后处理契约：产物登记、容器探测、探测失败必须回退
 │   └── ui.mjs                       # 视图契约：树合法性、受控输入、保存语义、越界检查
 ├── dist/                            # ← 构建产物 = 插件本体（「从目录安装」指向此目录；不入库）
-├── adfilter/                        # 早期本地去广告清洗服务（独立进程）—— 已归档，v2.1.0 起由拦截器取代
 ├── docs/settings.md                 # 使用者文档：28 个设置项的作用 / 配置 / 效果 / 示例
 ├── .github/workflows/build.yml      # CI：门禁 + 类型检查 + 构建 + 校验 + 五层测试 + CHANGELOG/发版守卫
 ├── LICENSE
