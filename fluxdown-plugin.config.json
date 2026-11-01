@@ -3,7 +3,6 @@
     "resolver.js": "src/entry/resolver.ts",
     "hooks.js": "src/entry/hooks.ts",
     "subscribe.js": "src/entry/subscribe.ts",
-    "intercept.js": "src/entry/intercept.ts",
-    "main.js": "src/entry/main.tsx"
+    "intercept.js": "src/entry/intercept.ts"
   }
 }

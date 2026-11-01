@@ -8,7 +8,7 @@
 > 小决策的留痕在此，重大决策走 `.agents/adr/`。
 >
 > 2.0.0 – 3.0.0 各节已完成并提交，尚未打 tag 发版，日期标「未发布」；发版时替换为实际日期。
-> 原计划的 2.3.0（设置页签）从未发布，已并入 3.0.0 —— 3.0.0 移除登录入口属 breaking，故一并升大版本。
+> 原计划的 2.3.0（设置页）从未发布，已并入 3.0.0 —— 3.0.0 移除登录入口属 breaking，故一并升大版本。
 
 ## [Unreleased]
 
@@ -19,16 +19,16 @@
 - 移除登录入口：删掉 `auth` 段与 `auth` 权限，产物入口由 6 个降为 5 个（理由：登录对话框按站点登录，与对所有站点生效的定位冲突，见 ADR-0006）
 - 删除 `src/entry/auth.ts`；`tests/parity` 中 13 条 `auth` 场景随功能删除，改由 `tests/contract` 断言「已移除」
 - 删除 `adfilter/` 目录：v1.4.3 停用的本地去广告清洗服务（Python，独立进程），manifest 无对应设置项、构建无对应入口、测试无引用，规则特征早已迁入 `lib/adrules.ts`
+- 移除自定义设置视图（`contributes.views` + `main` 入口 + `src/entry/main.tsx`）：设置面收敛为宿主自动生成的表单（理由：视图与表单并存时宿主自带一层页签，嵌套菜单且同名歧义，见 ADR-0009）
+- 删除 `src/lib/rulecheck.ts` 与 `src/lib/adpresets.ts`：只服务旧设置视图，规则 JSON 的格式说明改由字段描述与 `docs/settings.md` 承担
 
 ### Added
 
 - 新增 `src/lib/credential.ts`：凭据文本解析（bearer / basic / 多行头 / Cookie），补丁与抓取两处共用
-- 新增设置页签「去广告规则」（`main.tsx` + `contributes.views`）：模式切换、规则即时校验、五档预设
-- 新增 `src/lib/rulecheck.ts`：界面侧规则校验，与拦截器共用 `parseAdRuleSet`，不另写一套判定
-- 新增 `src/lib/adpresets.ts`：从保守到激进的五档规则形态，不内置任何站点域名名单
-- 新增 `tests/ui.mjs`：视图契约（树合法性、受控输入、保存语义、越界、SDK 运行时例外边界），现 48 项
+- `adRulesExtra` 字段说明自带 JSON 格式示例（`keepPath` / `dropPath` / `dropHosts`），逐项说明见 `docs/settings.md`
+- 新增 `tests/ui.mjs`：设置表单契约（开关成组、主题前缀、默认值锁定、select 选项、产物形态），现 18 项
 - `scripts/check-fast.sh` 新增第 6 条：manifest 声明的入口必须在构建配置里有映射
-- 新增 ADR-0005：视图用 SDK 的 `jsx-runtime`，AGPL 义务登记在 `THIRD-PARTY.md`；ADR-0004 随之被取代
+- 新增 ADR-0009（取代 0008、解除 0005 的 JSX 运行时例外）：设置面收敛为宿主表单，产物零 SDK 运行时；ADR-0004～0008 的设置页中间形态随之作废
 - 新增 ADR-0008（取代表 0007）：设置页改三个页签，去掉 `expertMode` 开关，页签选择只存视图 state
 - 新增 `AGENTS.md`、`.agents/` 工程文档、`ROADMAP.md`、`CONTRIBUTING.md`、`THIRD-PARTY.md`
 - 新增 `scripts/check-fast.sh` 快速门禁与 `.githooks/pre-commit`，本地与 CI 共用同一份断言
@@ -38,18 +38,17 @@
 ### Changed
 
 - 登录凭据改由设置项 `authCookie` 直供：下载补丁走 `originHeaders`、抓取走 `fetchHeaders`，同源闸不变
-- 设置页签改为「插件设置」并分三页：基础（只有开关，11 项）、参数（填值，14 项）、去广告（2 项）；页签只是浏览位置，不写进设置
-- 27 个设置项的标题与描述改写为面向使用者的一句话，总字数从 2767 降到 670，并按「开关在前、参数在后」重排
-- 「保存」只写改动过的键，不再整份回写草稿
-- 测试链路由四层扩为五层，`npm test` 增加 `ui`；`main` 视图的 schema 与交互从此有断言
+- 设置面 = 宿主自动生成的单张表单（无页签）：开关 11 项连续排最前并成一张卡片，参数 14 项按主题聚簇（标题「主题 · 项目」），去广告 2 项殿后
+- 27 个设置项的标题与描述改写为面向使用者的一句话，总字数从 2767 降到 670
+- 测试链路由四层扩为五层，`npm test` 增加 `ui`（设置表单契约）
 - CI 由 `ci.yml` 改为 `build.yml`，新增 CHANGELOG 门禁与发版守卫两个 job
 - 工程文档从 `docs/` 迁到 `.agents/`，`docs/` 只保留使用者文档（理由：两类读者不该共用一处）
 - `.agents/capability-matrix.md` 同步为现状：`METHOD=NONE` 标记为已修复、请求面改用 `request` 补丁
 - 发版守卫要求版本节带实际日期，`- 未发布` 占位不再通过（理由：占位与日期在旧正则下不可区分，等于放行）
 - `AGENTS.md` §9 同改矩阵的「设置键」一行改指 `manifest.json` + `settings.ts`，仓库配置单列一行
 - 使用者文档 `docs/configuration.md` 改名 `docs/settings.md`（理由：与 `.agents/configuration.md` 同名，跨目录引用会指错）
-- `.agents/sdk-migration.md` 更正 M5 说明：`settings` 视图是**新增**页签，不替换「基础设置」页签
-- `THIRD-PARTY.md` 新增「随产物分发的 AGPL 组件」一节，登记 `dist/main.js` 内联的 jsx-runtime 及义务边界
+- `.agents/sdk-migration.md` 的 M5 记录设置面的形态迭代（两档 → 三页签 → 宿主表单），待实测项随形态更新
+- `THIRD-PARTY.md` 的 SDK 登记改为「仅 `import type`，零运行时随分发」（jsx-runtime 例外已解除）
 - `.agents/configuration.md` 补 ruleset 的 `enforcement` 核对步骤与合并策略（squash），分支保护改按 ruleset 描述
 
 ### Fixed

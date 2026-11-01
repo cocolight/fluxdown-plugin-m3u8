@@ -17,7 +17,8 @@
 | [0002](0002-migrate-to-typescript-and-plugin-sdk.md) | 源码迁移到 TypeScript + 插件 SDK 构建链 | 已接受 |
 | [0003](0003-sdk-type-only-import.md) | SDK 仅以 `import type` 引用 | 已接受（0005 修订） |
 | [0004](0004-no-sdk-jsx-runtime.md) | 视图层不用 SDK 的 JSX 运行时，改用 `flux.ui.h` | 已被 0005 取代 |
-| [0005](0005-allow-sdk-jsx-runtime.md) | 允许 SDK 的 JSX 运行时进入产物，义务登记在 THIRD-PARTY | 已接受 |
+| [0005](0005-allow-sdk-jsx-runtime.md) | 允许 SDK 的 JSX 运行时进入产物，义务登记在 THIRD-PARTY | 例外已随 0009 解除 |
 | [0006](0006-drop-auth-entry.md) | 移除登录入口，凭据改由设置项 `authCookie` 直供 | 已接受 |
 | [0007](0007-two-tier-settings-view.md) | 设置页分「常用 / 专业」两档，`expertMode` 控制展开 | 已被 0008 取代 |
-| [0008](0008-three-tab-settings-view.md) | 设置页改三个页签（基础 / 参数 / 去广告），去掉 `expertMode` | 已接受 |
+| [0008](0008-three-tab-settings-view.md) | 设置页改三个页签（基础 / 参数 / 去广告），去掉 `expertMode` | 已被 0009 取代 |
+| [0009](0009-settings-host-form-only.md) | 设置面收敛为宿主表单，删除自定义视图 | 已接受 |
