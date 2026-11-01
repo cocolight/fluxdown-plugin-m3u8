@@ -31,3 +31,7 @@ jobs:
       # 重构安全网 —— 出现差异说明改动并非「行为等价」，需说明原因或修回。
       - name: 行为回归比对
         run: npm run parity
+
+      # 请求面契约：M2 起凭据只经 originHeaders 下发、Basic 的 UTF-8 编码正确、凭据不落库。
+      - name: 请求面契约
+        run: npm run contract

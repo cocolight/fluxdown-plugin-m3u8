@@ -1,68 +1,72 @@
-import type { ResolveResult } from "fluxdown-plugin-sdk";
+import type { OriginHeaders, RequestPatch, ResolveResult } from "fluxdown-plugin-sdk";
 import type { Env } from "./env";
 import { customHeaders, refererValue } from "./http";
 import { parseUrl, safeOrigin } from "./url";
+import { base64Utf8 } from "./base64";
 
 /**
- * 交给引擎下载的地址与请求头。
+ * 请求面：把「抓取清单/分片时要带什么」表达成 `ResolveResult.request`（`RequestPatch`）。
  *
- * ★ 本文件整体是 **M2 的退役目标**：v0.5.8 起 `resolve()` 返回值有 `request: RequestPatch`
- *   （cookies / originHeaders / referrer / userAgent / setHeaders），由引擎「每次运行重放、
- *   不落库」。届时 `authHeadersAsync` 与 `b64encode` 一起删除。
+ * ★ M2 变更（2026-11-01）：不再把请求头塞进 `extraHeaders`。三个结构性差别：
+ *   1. `extraHeaders` 会**替换**任务请求头表并作用于该任务的全部请求，包括 CDN 主机 ——
+ *      凭据因此有跟着分片请求发给第三方 CDN 的风险（v1.8.0 靠手写同源比较挡住「整条
+ *      不注入」，挡不住「清单在站内、分片在 CDN」的半泄漏）。
+ *      `originHeaders` 是**白名单**语义：只有 origin 精确相等的请求才附加。
+ *   2. `referrer` / `userAgent` 由引擎锁定，不会被引擎自身的自适应覆盖，也不会与同名头
+ *      互相踩踏。
+ *   3. 补丁**每次运行重放、绝不落库**（官方明确），一次性签名链接与临时 Cookie 不进任务记录。
  *
- * 保留原因（v1.8.0 已核实 native/engine/src/plugin/bridge.rs）：宿主**只在 `flux.fetch` 内**
- * 调用 `AuthProfile::apply_to_headers`，下载链路（playlist / 分片 / KEY）拿不到插件的认证
- * 档案 —— 所以 M1 仍必须由插件把凭据并进 extraHeaders，否则表现为「解析成功却 403」。
+ * 头名的合并优先级与 v1.8.0 完全一致，逐项见 `requestPatch()` 注释。
  */
 
-const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+// ---------------------------------------------------------------------------
+// 小而必要的头表工具：HTTP 头名不区分大小写，但保留最后一次写入的拼写
+// ---------------------------------------------------------------------------
 
-/** 沙箱无 btoa（QuickJS 全局对象实测），Basic 的 base64 只能手写。TODO(M2)：实测 btoa 后删除。 */
-function b64encode(s: string): string {
-  const str = String(s == null ? "" : s);
-  const bytes: number[] = [];
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    if (c < 0x80) bytes.push(c);
-    else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 63));
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
-      const cp = 0x10000 + ((c - 0xd800) << 10) + (str.charCodeAt(++i) - 0xdc00);
-      bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
-    } else bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
-  }
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i];
-    const b1 = i + 1 < bytes.length ? bytes[i + 1] : -1;
-    const b2 = i + 2 < bytes.length ? bytes[i + 2] : -1;
-    out += B64_CHARS[b0 >> 2];
-    out += B64_CHARS[((b0 & 3) << 4) | (b1 < 0 ? 0 : b1 >> 4)];
-    out += b1 < 0 ? "=" : B64_CHARS[((b1 & 15) << 2) | (b2 < 0 ? 0 : b2 >> 6)];
-    out += b2 < 0 ? "=" : B64_CHARS[b2 & 63];
-  }
-  return out;
-}
-
-function hasHeaderCI(h: Record<string, string>, name: string): boolean {
-  const want = String(name).toLowerCase();
+function pickCI(h: Record<string, string>, name: string): string | undefined {
+  const want = name.toLowerCase();
   for (const k in h) {
-    if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === want) return true;
+    if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === want) return h[k];
   }
-  return false;
+  return undefined;
 }
+
+function setCI(h: Record<string, string>, name: string, value: string): void {
+  const want = name.toLowerCase();
+  for (const k in h) {
+    if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === want) delete h[k];
+  }
+  h[name] = value;
+}
+
+function takeCI(h: Record<string, string>, name: string): string | undefined {
+  const v = pickCI(h, name);
+  if (v !== undefined) {
+    const want = name.toLowerCase();
+    for (const k in h) {
+      if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === want) delete h[k];
+    }
+  }
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// 凭据 → originHeaders
+// ---------------------------------------------------------------------------
 
 /**
  * 档案 → 请求头（与宿主 `AuthProfile::apply_to_headers` 同序：Cookie / Bearer / Basic 只取其一，
- * 档案自带的 headers 最后覆盖同名）。返回 null 表示本次不注入。
+ * 档案自带的 headers 最后覆盖同名）。
  *
- * 站点键与宿主 `auth::site_key` 同口径（`{scheme}://{host}[:port]`）。这里必须自己补上同源闸，
- * 否则 Cookie 会跟着 CDN 主机一起发出去 —— 宿主在 `flux.fetch` 里本就做同源检查，
- * 而插件把凭据复制进 extraHeaders 绕开了那道检查。
+ * 站点键与宿主 `auth::site_key` 同口径（`{scheme}://{host}[:port]`）。这里保留 v1.8.0 的同源闸：
+ * 目标与登记站点不同源时**整条不注入**并记日志 —— `originHeaders` 由引擎再兜一层，但显式拒绝
+ * 比交给引擎更早给出可诊断的线索（用户看到日志就知道「不是插件没实现，是站点对不上」）。
  */
-async function authProfileHeaders(env: Env, targetUrl: string): Promise<Record<string, string> | null> {
+async function credentialOrigin(env: Env, targetUrl: string): Promise<OriginHeaders | null> {
   const authRef = env.ctx.authRef ? String(env.ctx.authRef) : "";
   if (!authRef) return null;
   if (!flux.auth || typeof flux.auth.get !== "function") return null; // 未授予 auth 权限
+
   let p: Record<string, unknown> | null = null;
   try {
     p = (await flux.auth.get(authRef)) as Record<string, unknown> | null;
@@ -84,49 +88,76 @@ async function authProfileHeaders(env: Env, targetUrl: string): Promise<Record<s
     return null;
   }
 
-  const ph: Record<string, string> = {};
-  if (p.cookies) ph["Cookie"] = String(p.cookies);
-  if (p.accessToken) ph["Authorization"] = "Bearer " + String(p.accessToken);
+  const headers: Record<string, string> = {};
+  if (p.cookies) headers["Cookie"] = String(p.cookies);
+  if (p.accessToken) headers["Authorization"] = "Bearer " + String(p.accessToken);
   if (String(p.kind || "").toLowerCase() === "basic" && (p.username || p.password)) {
-    ph["Authorization"] = "Basic " + b64encode(String(p.username || "") + ":" + String(p.password || ""));
+    headers["Authorization"] = "Basic " + base64Utf8(String(p.username || "") + ":" + String(p.password || ""));
   }
   if (p.headers && typeof p.headers === "object") {
     const extra = p.headers as Record<string, unknown>;
     for (const k in extra) {
-      if (Object.prototype.hasOwnProperty.call(extra, k)) ph[k] = String(extra[k]);
+      if (Object.prototype.hasOwnProperty.call(extra, k)) headers[k] = String(extra[k]);
     }
   }
-  return ph;
+  return { origin: site, headers };
 }
 
+// ---------------------------------------------------------------------------
+// 补丁构造
+// ---------------------------------------------------------------------------
+
 /**
- * 下载引擎用的请求头。顺序（后者不覆盖前者）：
- *   自动 Referer/Origin → extraHeadersRaw/userAgent → 任务 extraHeaders → 认证凭据（同源 + 无同名头）。
+ * 生成本次运行的请求补丁。头名优先级（后者覆盖前者，与 v1.8.0 的 `extraHeaders` 同序）：
+ *
+ *   自动 Referer/Origin  →  `userAgent` / `extraHeadersRaw`  →  任务 `ctx.extraHeaders`
+ *
+ * `Referer` 与 `User-Agent` 从 `setHeaders` 里摘出来单独放进 `referrer` / `userAgent`
+ * （引擎对这两个字段有锁定语义；留同名头在 `setHeaders` 里会形成两个来源，谁生效说不清）。
+ * 凭据放 `originHeaders`，且**跳过**用户已显式声明的同名头（保持「用户写的优先」）。
+ *
+ * 返回 undefined 表示无需任何改写（空补丁不该占字段）。
  */
-export async function authHeadersAsync(env: Env, targetUrl: string): Promise<Record<string, string>> {
-  const extra: Record<string, string> = {};
-  const ref = refererValue(env);
-  if (ref) extra["Referer"] = ref;
-  // Origin 取「页面」的来源（浏览器语义），而非 CDN 的来源
-  const org = safeOrigin(ref) || safeOrigin(env.ctx.url);
-  if (org) extra["Origin"] = org;
+export async function requestPatch(env: Env, targetUrl: string): Promise<RequestPatch | undefined> {
+  const { ctx, s } = env;
 
-  const ch = customHeaders(env.s);
-  for (const k in ch) if (Object.prototype.hasOwnProperty.call(ch, k)) extra[k] = ch[k];
-
-  // 任务自带的 extraHeaders 优先级最高
-  const raw = env.ctx.extraHeaders;
-  if (raw) {
-    for (const k in raw) if (Object.prototype.hasOwnProperty.call(raw, k)) extra[k] = raw[k];
+  // 1) 基线：userAgent + extraHeadersRaw（多行 `Key: Value`），再叠任务自带的 extraHeaders
+  const merged: Record<string, string> = {};
+  const base = customHeaders(s);
+  for (const k in base) if (Object.prototype.hasOwnProperty.call(base, k)) setCI(merged, k, base[k]);
+  const task = ctx.extraHeaders;
+  if (task && typeof task === "object") {
+    for (const k in task) if (Object.prototype.hasOwnProperty.call(task, k)) setCI(merged, k, String(task[k]));
   }
 
-  const ph = await authProfileHeaders(env, targetUrl);
-  if (ph) {
-    for (const k in ph) {
-      if (Object.prototype.hasOwnProperty.call(ph, k) && !hasHeaderCI(extra, k)) extra[k] = ph[k];
+  // 2) Referer：用户显式声明的优先，否则用自动值（任务 referrer → 原 URL 的 origin）
+  let referrer = takeCI(merged, "Referer");
+  if (!referrer) referrer = refererValue(env);
+
+  // 3) Origin 取「页面」的来源（浏览器语义），而非下载目标（CDN）的来源
+  const origin = takeCI(merged, "Origin") || safeOrigin(referrer) || safeOrigin(ctx.url);
+
+  // 4) User-Agent 单列
+  const userAgent = takeCI(merged, "User-Agent") || s.userAgent.trim();
+
+  const patch: RequestPatch = {};
+  if (referrer) patch.referrer = referrer;
+  if (userAgent) patch.userAgent = userAgent;
+  if (origin) merged["Origin"] = origin;
+
+  // 5) 凭据：同源才注入，且不覆盖用户显式写的同名头
+  const cred = await credentialOrigin(env, targetUrl);
+  if (cred) {
+    const keep: Record<string, string> = {};
+    for (const k in cred.headers) {
+      if (!Object.prototype.hasOwnProperty.call(cred.headers, k)) continue;
+      if (pickCI(merged, k) === undefined) keep[k] = cred.headers[k];
     }
+    if (Object.keys(keep).length) patch.originHeaders = [{ origin: cred.origin, headers: keep }];
   }
-  return extra;
+
+  if (Object.keys(merged).length) patch.setHeaders = merged;
+  return Object.keys(patch).length ? patch : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +190,7 @@ export function assertOutputUrl(u: string | null | undefined, what: string): str
   );
 }
 
-/** 单直链返回（v1.8.0 的 resolver::finalize）。M2 起改为返回 `request` 补丁。 */
+/** 单直链返回。请求面一律走 `request` 补丁，不再返回 `extraHeaders`。 */
 export async function buildOutput(
   env: Env,
   url: string,
@@ -169,7 +200,8 @@ export async function buildOutput(
   const out: ResolveResult = { url: assertOutputUrl(url, "顶层 url") };
   if (fileName) out.fileName = fileName;
   if (audioUrl) out.audioUrl = assertOutputUrl(audioUrl, "audioUrl");
-  out.extraHeaders = await authHeadersAsync(env, url);
+  const patch = await requestPatch(env, url);
+  if (patch) out.request = patch;
   out.rangeSupported = true; // HLS CDN 通常支持 Range → 多线程分段
   out.ephemeral = env.s.ephemeral;
   return out;

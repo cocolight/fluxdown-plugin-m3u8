@@ -135,6 +135,7 @@
 | 1.6.0 | 登录认证（`auth`）、订阅追更（`subscriptions`） | `auth` + `subscriptions`（引擎 **v0.4.8** 起） | `0.4.8` |
 | 1.7.0 | 防抓页校验、内嵌播放器跟随 | **无新增引擎字段**（仅 `flux.fetch` + 设置项） | `0.4.8`（不可回落） |
 | 1.8.0 | DASH 发现层（页面抠 `.mpd` + 直链 `.mpd` 放行） | **无新增引擎字段**（仅正则 + `flux.fetch` + 设置项） | `0.4.8`（不可回落） |
+| 2.0.0 | 构建工程化（TypeScript + SDK）；下载请求头改由 `ResolveResult.request` 补丁下发，凭据走 `originHeaders` 白名单 | `ResolveResult.request`（`RequestPatch`，与 `prepare` 阶段同形，引擎 **v0.5.8** 起） | **`0.5.8`**（不可回落） |
 
 ★ **`minAppVersion` 救不了旧版**：manifest 为 `deny_unknown_fields` —— 旧版 FluxDown 见到 `multi` / `subscriptions` / `auth` 会**拒绝整份 manifest**（表现为插件被跳过，而非忽略该字段）。`minAppVersion` 是在 **serde 解析成功之后**才检查的，此时旧版早已解析失败。因此：
 

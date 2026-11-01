@@ -130,6 +130,8 @@ fluxdown-plugin-m3u8/
 
 ### 5.1 resolver：返回值改用 `request` 补丁
 
+> 已落地（M2）。与本节原稿有三处差异 —— `b64encode` 保留、`extraHeaders` 直接删净、`minAppVersion` 抬到 `0.5.8`，理由见 **8.3**。
+
 现状（`resolver.js:249-269`）把凭据硬并进 `extraHeaders`，原因是下载链路看不到认证档案。现在：
 
 ```ts
@@ -375,10 +377,14 @@ globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物
 | 里程碑 | 内容 | 验收标准 | 状态 |
 | --- | --- | --- | --- |
 | **M1 工程化** | 建 SDK 项目骨架、拆 `lib/*`、`manifest.json` 移到根、`npm run build` + `validate` 通过；四个入口行为等价 | 同一批 URL（直链 m3u8 / media playlist / 播放页 / 剧集页 / mpd / 需登录站）下载结果与 1.8.0 逐字一致；`dist` 目录可被"从目录安装"加载 | **已完成**（见 8.1） |
-| **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 | 待开始 |
+| **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 | **已完成**（见 8.3） |
 | **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 | 待开始 |
 | **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；（实测通过后）`finalize.replaceWith` | 删除任务时产物一并删除；不再出现孤立 `.ts`；`maxRangeBytes` 站点可多线程 | 待开始 |
 | **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" | 待定 |
+
+M5 特别说明：`location: "settings"` **至多一个**视图，它替换插件的默认设置页签；`desktop` 入口会拉高到
+**完全风险**等级并需要 `desktop` 权限 —— **不要**为了界面顺手引入，可移植视图（`main` + `flux.ui.h`）
+已经够用，且 Web 端同样渲染。
 
 ### 8.1 M1 落地结果（2026-11-01）
 
@@ -424,10 +430,46 @@ dist/（不入库）                                .github/workflows/ci.yml
 4. **`.Trash-0/` 会被 `git add -A` 误收**：沙箱的 `rm` 走安全删除，把被删文件移进仓库根的 `.Trash-0/`。
    已在 `.gitignore` 中屏蔽（含 `.mutant/`，比对自检用的产物副本目录）。
 
+### 8.3 M2 落地结果（2026-11-01）
 
-M5 特别说明：`location: "settings"` **至多一个**视图，它替换插件的默认设置页签；`desktop` 入口会拉高到
-**完全风险**等级并需要 `desktop` 权限 —— **不要**为了界面顺手引入，可移植视图（`main` + `flux.ui.h`）
-已经够用，且 Web 端同样渲染。
+**改法与方案原稿的差异（三处，都有理由）**
+
+| 原稿 | 实际 | 理由 |
+| --- | --- | --- |
+| `b64encode()` 直接删除 | 保留，改为 `lib/base64.ts` 的 `base64Utf8()`：优先用原生 `btoa`，无则落字符表 | ① `btoa` 只吃 latin1，中文用户名（Basic 凭据里很常见）仍需手写 UTF-8 前置编码；② `btoa` 是否存在仍是「旧实测说无 / 新文档说有」的冲突状态，未装机复验前不能单腿站立。字符表只剩 10 行，且被契约测试覆盖 |
+| `extraHeaders` 迁移期「同时保留」 | 直接删干净，结果里只留 `request` | 两个来源会形成「谁生效」的长期歧义；且引擎语义是「先 `extraHeaders` 替换请求头表、再叠加 `request`」，同保留等于把凭据又写回可泄漏的那张表 |
+| 未提版本门槛 | `minAppVersion` `0.4.8` → **`0.5.8`**，版本号 `1.8.0` → **`2.0.0`** | `request` 与 `prepare` 阶段同形（`RequestPatch`），随拦截器一同在 0.5.8 引入。若不抬门槛，旧客户端遇到未知字段的行为是**整次解析失败**，比 403 更难诊断 |
+
+**同源闸保留了两层**：插件侧仍做 `site === 下载目标 origin` 比较（不一致即整条不注入并记日志，
+与原行为逐字一致），引擎侧再由 `originHeaders` 白名单兜一层。看似重复，但第一层给出可诊断的线索
+（用户看到日志就知道「不是插件没实现，是站点对不上」），第二层才是真正的强制。
+
+**验收**
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` / `build` / `validate` | 通过；`valid (risk: elevated)` |
+| `npm run parity` | **67/67 场景一致** —— 请求面经 `requestFace()` 同义归并后逐字段比「最终生效值」 |
+| `npm run contract` | **22/22 项通过** —— 凭据作用域、Basic 编码、Referer/UA 落点、优先级、不落库、透传 |
+| 变异自检（contract） | 把产物里的 `originHeaders` 改名 → 6 项失败，确认契约不是空跑 |
+
+**新增的测试基础设施**
+
+- `tests/parity/harness.mjs`：假宿主 + 规范化 + 差异定位，从 `parity.mjs` 抽出，两个测试共用。
+  原先这段内联在 `parity.mjs` 里，contract 要复用时只能复制 —— 与 M1 消重的主旨相悖。
+- `tests/parity/face.mjs`：`requestFace()` 把 `extraHeaders` 与 `request` 归并成同一形状
+  （`referrer` / `userAgent` / `headers` / `credentials`）。**只归并同义项**：凭据作用域
+  （`*` vs 具体 origin）不在归并范围内，交给 contract。
+- `tests/contract.mjs`：M2 的**行为契约**。parity 回答「和 v1.8.0 是否等价」，contract 回答
+  「现在应该是什么样」—— 有意改变的行为必须进后者，否则只能靠改基线把差异抹平。
+
+**留给装机验证的三件事（新增到第九节）**
+
+1. `request.referrer` / `userAgent` 是否真的对**分片请求**生效（不只是清单请求）。
+2. `variants` 非空时 `request` 是否对「用户手选的那条变体」生效（原第 4 项，仍待验）。
+3. `originHeaders` 与 `setHeaders` 的同名头优先级 —— 我们靠「不写重复同名头」绕开了这个不确定性，
+   但如果引擎语义是 `setHeaders` 覆盖 `originHeaders`，某些站点的手工 Cookie 会盖掉档案 Cookie，
+   这属于用户显式声明优先，反而符合预期；仍需实测确认不是相反顺序。
 
 ---
 
@@ -442,6 +484,9 @@ M5 特别说明：`location: "settings"` **至多一个**视图，它替换插�
 | 5 | `originHeaders` 的 host 归一化 | 决定 CDN 是否真的不收 Cookie | 用两个子域（`a.site.com` / `cdn.site.com`）分别登记，观察注入 |
 | 6 | 开发模式 `dist/` 热重载 | 决定 M1 之后的工作流 | 改 `resolver.ts` → build → 不重载是否生效；改 `manifest.json` → 必须重载 |
 | 7 | `validate` 严格模式对现有 manifest 的裁决 | 可能立刻暴露既有字段问题（如 `default` 类型） | 根目录跑 `npx fluxdown-plugin validate` |
+| 8 | `request.referrer` / `userAgent` 是否对**分片请求**生效 | 若只作用于清单请求，防盗链站的分片会被 403；M2 的整个请求面都押在这条上 | 抓包看 `.ts` 请求是否带 Referer；对比「只设 referrer」与「同时塞同名头」两种写法的成功率 |
+| 9 | `originHeaders` 与 `setHeaders` 的同名头优先级 | 决定用户手写的 Cookie 能否盖过档案 Cookie（应能） | 档案 Cookie 与 extraHeadersRaw 各写一个同名 Cookie，看服务端收到哪个 |
+| 10 | 0.5.8 之前的客户端遇到 `request` 字段的裁决 | 决定 `minAppVersion` 能不能留 `0.4.8`（现按 0.5.8 处理，属保守选择） | 在 0.4.x 客户端装 2.0.0 包，看是「插件被跳过」「解析失败」还是「忽略该字段」 |
 
 ---
 

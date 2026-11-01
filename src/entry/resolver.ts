@@ -9,7 +9,7 @@ import { newEnv } from "../lib/env";
 import { readSettings } from "../lib/settings";
 import { install } from "../lib/install";
 import { markHandled } from "../lib/handled";
-import { assertOutputUrl, authHeadersAsync, buildOutput } from "../lib/request";
+import { assertOutputUrl, buildOutput, requestPatch } from "../lib/request";
 import { followIframe, refererValue, smartFetch } from "../lib/http";
 import { audioSourceFor } from "../lib/audio";
 import {
@@ -52,8 +52,8 @@ import {
  *   - 任务分组：插件不创建任务；返回多文件清单（resolvers[0].multi=true），由**引擎**裂变建组。
  *   - SAMPLE-AES / FairPlay / Widevine、LL-HLS(#EXT-X-PART)、真直播无限录制：核心层能力。
  *   - onMetaProbed：带 resolver 的插件该钩子永不触发（官方明确），故 manifest 不订阅。
- *   - 认证凭据：M1 仍由 `authHeadersAsync` 并进 extraHeaders（下载链路拿不到插件档案）；M2 改为
- *     `request` 补丁，届时可删。
+ *   - 认证凭据：M2 起经 `request.originHeaders` 交给引擎，按 origin 白名单附加到下载请求
+ *     （插件自己抓取时仍由宿主在 `flux.fetch` 内注入），不再写进 `extraHeaders`。
  */
 
 async function marked(env: Env, obj: ResolveResult | null): Promise<ResolveResult | null> {
@@ -262,7 +262,9 @@ async function resolve(rawCtx: ResolveContext): Promise<ResolveResult | null> {
   };
   const nm = nameFor(s, ctx, pageTitle, chosen, defAudio);
   if (nm) out.fileName = nm;
-  out.extraHeaders = await authHeadersAsync(env, chosen.url);
+  // 补丁作用域是「本次运行」，与用户最终选中哪条变体无关 —— 引擎在选完变体后仍按它下发请求。
+  const patch = await requestPatch(env, chosen.url);
+  if (patch) out.request = patch;
   return await marked(env, out);
 }
 
@@ -384,7 +386,8 @@ async function resolveViaYtdlp(env: Env): Promise<ResolveResult> {
     rangeSupported: true,
     ephemeral: s.ephemeral,
   };
-  out.extraHeaders = await authHeadersAsync(env, direct);
+  const patch = await requestPatch(env, direct);
+  if (patch) out.request = patch;
   await markHandled(ctx.taskId);
   return out;
 }

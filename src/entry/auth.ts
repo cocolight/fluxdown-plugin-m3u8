@@ -19,8 +19,8 @@ import { install } from "../lib/install";
  *   多行 `Key: Value`（单行亦可）  → kind=headers （逐条注入）
  *   其余一切                     → kind=cookie  （Cookie）
  *
- * ★ 与下载链路的关系：宿主只在 flux.fetch 里注入认证档案，下载分片走任务 extraHeaders ——
- *   由 resolver 的 authHeadersAsync 并进去（M2 起改由 `request` 补丁承载）。
+ * ★ 与下载链路的关系：宿主只在 flux.fetch 里注入认证档案，下载分片走任务请求面 ——
+ *   自 v2.0.0 起由 resolver 返回的 `request.originHeaders` 承载（按 origin 白名单附加）。
  */
 
 const HEADER_LINE_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}\s*:\s*\S/;
