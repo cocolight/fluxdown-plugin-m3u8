@@ -7,10 +7,10 @@
 
 1. `manifest.json` 的 `settings[]` 追加一项：`key`（camelCase，全仓唯一）、`type`、`widget`、`default`、必要的 `min`/`max`/`options`。
 2. `src/lib/settings.ts` 读取该键并给出**默认值兜底**；不要在入口里直接读 `ctx.settings`。
-3. `docs/configuration.md` 补一节：作用 / 怎么配 / 效果 / 示例。使用者看这一份。
+3. `docs/settings.md` 补一节：作用 / 怎么配 / 效果 / 示例。使用者看这一份。
 4. 用户可见的行为变化同步 README「功能特性」一行。
 5. 测试：能落到契约层的写进 `tests/contract.mjs`（读取优先级、边界值、换算规则）；只是把值透传的，parity 覆盖不到就必须补一条契约，否则等于没测。
-6. 设置项数量变化时，检查 README 与 `docs/configuration.md` 里出现的「N 个设置项」这类计数，改准或改成不写数字。
+6. 设置项数量变化时，检查 README 与 `docs/settings.md` 里出现的「N 个设置项」这类计数，改准或改成不写数字。
 
 ## 加一个插件入口
 
@@ -73,3 +73,11 @@
 2. 在 `AGENTS.md` §1 路由表加一行指向它。
 3. 内容只放一份，按所用工具的目录映射（见 `.agents/skills/README.md`）。
 4. `check-fast.sh` 校验 frontmatter 两个字段，缺一个就红。
+
+## 换或加技术栈骨架
+
+1. `src/` `tests/` `scripts/` 三个目录的约定不变，只换里面的内容。
+2. 换构建链只改 `fluxdown-plugin.config.json` 与 `package.json` 的 scripts；同回合填实 `AGENTS.md` §2 五行命令与 §8 坐标表，`CONTRIBUTING.md`「本地检查」必须与 §2 完全一致。
+3. `.github/workflows/build.yml` 的 `test` job 三件事缺一不可：装依赖、类型 / 格式检查、测试。不得写成 `|| true`，不得把失败降级为警告。
+4. 加一类新产物（新入口脚本、新资源文件）时，同回合改 `fluxdown-plugin.config.json`、`manifest.json` 对应段、`README.md`「文件结构」、`.agents/architecture.md` §1。
+5. 分层约定尽量做成机械门禁：`tsconfig.json` 的 `lib` 不含 `DOM` 就是现成一例 —— 违规在编译期暴露，不必靠 review 记忆。

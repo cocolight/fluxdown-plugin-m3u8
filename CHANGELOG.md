@@ -16,12 +16,21 @@
 - 新增 `AGENTS.md`、`.agents/` 工程文档、`ROADMAP.md`、`CONTRIBUTING.md`、`THIRD-PARTY.md`
 - 新增 `scripts/check-fast.sh` 快速门禁与 `.githooks/pre-commit`，本地与 CI 共用同一份断言
 - 新增 `.github/pull_request_template.md`
+- `.agents/extension-points.md` 补「换或加技术栈骨架」一节（理由：模板列六项扩展点，此前只覆盖五项）
 
 ### Changed
 
 - CI 由 `ci.yml` 改为 `build.yml`，新增 CHANGELOG 门禁与发版守卫两个 job
 - 工程文档从 `docs/` 迁到 `.agents/`，`docs/` 只保留使用者文档（理由：两类读者不该共用一处）
 - `.agents/capability-matrix.md` 同步为现状：`METHOD=NONE` 标记为已修复、请求面改用 `request` 补丁
+- 发版守卫要求版本节带实际日期，`- 未发布` 占位不再通过（理由：占位与日期在旧正则下不可区分，等于放行）
+- `AGENTS.md` §9 同改矩阵的「设置键」一行改指 `manifest.json` + `settings.ts`，仓库配置单列一行
+- 使用者文档 `docs/configuration.md` 改名 `docs/settings.md`（理由：与 `.agents/configuration.md` 同名，跨目录引用会指错）
+
+### Fixed
+
+- README 的 Releases 链接写成 `../../releases`，会解析到用户级页面，改为仓库绝对地址
+- `AGENTS.md` §3 漏掉「保护分支，禁止直接推送」一条，`CONTRIBUTING.md` 同步补回
 
 ### Removed
 

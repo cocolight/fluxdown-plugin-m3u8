@@ -84,7 +84,7 @@ git update-index --chmod=+x scripts/check-fast.sh
 |--------|--------|------|
 | `test` | push 到 `master`、`v*` tag、所有 PR | 快速门禁 + 类型检查 + 格式检查 + 构建 + manifest 校验 + 四层测试 |
 | `Changelog gate` | 仅 PR | `feat`/`fix` 改了代码却没更新 `CHANGELOG.md` 时拦下 |
-| `Release guard` | 仅 `v*` tag | 校验 CHANGELOG 有对应版本节、ROADMAP 无 `in-progress` 行 |
+| `Release guard` | 仅 `v*` tag | 校验 `CHANGELOG.md` 有带**实际日期**的对应版本节（`未发布` 占位不通过）、`ROADMAP.md` 无 `in-progress` 行 |
 
 首次推送到 GitHub 后，需要在仓库设置里补齐三步：
 

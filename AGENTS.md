@@ -26,7 +26,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 | 确认当前任务与验收标准 | `ROADMAP.md` |
 | 改动涉及既有架构取舍 | `.agents/adr/`（先读索引） |
 | 加或改 AI skill | `.agents/skills/README.md` |
-| 安装、运行、给使用者的说明 | `README.md`、`docs/configuration.md` |
+| 安装、运行、给使用者的说明 | `README.md`、`docs/settings.md` |
 
 > 事实以源码为准：用 `read` 看结构、`grep` 查事实，文档只给坐标。
 >
@@ -49,7 +49,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 
 ## 3. 工作流
 
-- 默认分支 `master`（本仓库沿用建库分支名，与上游模板的 `main` 不同）。
+- 保护分支 `master`，禁止直接推送。本仓库沿用建库分支名 `master`（与上游模板的 `main` 不同），仓库内文档、CI、分支保护一律按 `master` 写。
 - 一个功能 = 一个 `feature/<名称>` 分支 = 一个 PR。
 - 新功能开发前，先在 `ROADMAP.md` 加一行（状态 `planned`、写清验收标准），确认后才转 `in-progress` 开干；小改动 / bugfix 无需走计划。
 - 提交：Conventional Commits，type 用英文前缀（`feat`/`fix`/`docs`/`test`/`chore`/`refactor`/`ci`）；描述可用中文；标题总长 ≤ 72 字符。
@@ -118,7 +118,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 
 | 契约 / 事实 | 唯一事实源在哪 |
 |---|---|
-| 设置键 / 设置项定义 | `manifest.json` 的 `settings[]`（27 项）。`docs/configuration.md` 是面向使用者的逐项说明，可能滞后，冲突以 manifest 为准 |
+| 设置键 / 设置项定义 | `manifest.json` 的 `settings[]`（27 项）。`docs/settings.md` 是面向使用者的逐项说明，可能滞后，冲突以 manifest 为准 |
 | 外部接口契约 | `src/types.ts` + `fluxdown-plugin-sdk` 的类型定义（宿主侧字段以 SDK 为准，SDK 未声明的在 `types.ts` 补注） |
 | 数据结构与存储 | `src/lib/handled.ts`（任务标记）、`src/lib/items.ts`（剧集条目映射）、`src/lib/settings.ts`（设置读取与默认值） |
 | 关键算法或业务规则 | `src/lib/adrules.ts`（去广告三条纪律）、`src/lib/hls.ts`（变体与音轨解析）、`src/lib/discovery.ts`（master / mpd 发现）、`src/lib/naming.ts`（命名决策链） |
@@ -134,7 +134,8 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 |---|---|
 | `.agents/` 下新增 / 改名 / 删除 `.md` | §1 路由表（漏了 `scripts/check-fast.sh` 会拦） |
 | 架构 / 分层 / 不变式 | `.agents/architecture.md`；需要留痕的追加 `.agents/adr/` |
-| 配置项 / 设置键 | `src/lib/settings.ts` → `docs/configuration.md` → `.agents/configuration.md` 与 §8 坐标表 |
+| 设置键 / 设置项 | `manifest.json` 的 `settings[]` → `src/lib/settings.ts` → `docs/settings.md` → §8 坐标表 |
+| 仓库配置 / CI / 分支保护 / 依赖安全 | `.agents/configuration.md` |
 | 入口 / 构建映射 | `fluxdown-plugin.config.json`、`manifest.json` 对应段、README「文件结构」 |
 | 命令或门禁 | §2 常用命令 → `CONTRIBUTING.md` → `scripts/check-fast.sh` → `.github/workflows/build.yml`，四处必须一致 |
 | `scripts/check-fast.sh` 或 `.githooks/` | CI 调用同一步：本地与 CI 共用一份断言，不得各写一遍 |

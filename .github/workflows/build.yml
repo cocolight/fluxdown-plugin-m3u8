@@ -127,8 +127,8 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VER="${TAG#v}"
           printf 'tag=%s version=%s\n' "$TAG" "$VER"
-          if ! grep -qE "^## \[$VER\] - " CHANGELOG.md; then
-            printf '::error::CHANGELOG.md 缺少版本节 [%s] - 日期（tag 为 %s）\n' "$VER" "$TAG"
+          if ! grep -qE "^## \[$VER\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            printf '::error::CHANGELOG.md 缺少填实日期的版本节：期望 "## [%s] - YYYY-MM-DD"（tag 为 %s；「未发布」占位不算填实）\n' "$VER" "$TAG"
             exit 1
           fi
           if grep -qE '\|[[:space:]]*in-progress[[:space:]]*\|' ROADMAP.md; then

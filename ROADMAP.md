@@ -16,3 +16,6 @@
 | 6 | 设置页视图（M5）：`main` + `contributes.views` 做去广告规则编辑 | - | planned | 4 | 视图在桌面与 Web 均渲染；`npm run validate` 风险等级仍为 `elevated`（未引入 `desktop` 权限） |
 | 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 18 项 | - | planned | 4 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
 | 8 | 字幕下载 / 封装 | - | dropped | - | 判定依据：`.agents/capability-matrix.md` §4 —— resolver 返回值无字幕字段，插件亦不能写入下载目录 |
+
+> 第 1、2 行写的「parity 67/67 一致」是 M1 / M2 当时的验收口径，按只追加规则原样保留。
+> M4 起 parity 口径为 63/67 一致 + 4 项 `diverges` 声明（见第 4 行），以 `npm run parity` 实际输出为准。

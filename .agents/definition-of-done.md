@@ -16,7 +16,7 @@
 
 | type | 额外要求 |
 |------|----------|
-| `feat` | 必须新增测试；影响用户可见行为的，同步 `docs/configuration.md` 或 README |
+| `feat` | 必须新增测试；影响用户可见行为的，同步 `docs/settings.md` 或 README |
 | `fix` | 必须新增能复现原缺陷的回归测试 |
 | `docs` | 无需测试，但链接与示例须可用 |
 | `chore` / `ci` | 不得降低既有门禁强度 |

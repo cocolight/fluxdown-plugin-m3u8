@@ -14,7 +14,7 @@
 - [ ] 待发版 commit 已经合入 `master`（只在 `master` 上发版，不在功能分支上发）
 - [ ] 装机验证项（`.agents/sdk-migration.md` 第九节）中，与本次改动相关的条目已有结论；未验证的须在 Release 说明里点明
 
-> 这份清单有机械兜底：推送 `v*` tag 时 `build.yml` 的 `Release guard` 会校验 `CHANGELOG.md` 有对应版本节、`ROADMAP.md` 无 `in-progress` 行。漏了前置条件，流水线直接红。
+> 这份清单有机械兜底：推送 `v*` tag 时 `build.yml` 的 `Release guard` 会校验 `CHANGELOG.md` 有**带实际日期**的对应版本节（`- 未发布` 占位会被拒）、`ROADMAP.md` 无 `in-progress` 行。漏了前置条件，流水线直接红。
 
 ## 2. 命名 —— 本次唯一的硬规则
 
