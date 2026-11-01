@@ -4,7 +4,7 @@
 
 一个 [FluxDown](https://github.com/zerx-lab/FluxDown) 下载器插件：把播放页或 `master.m3u8` 解析成可直接下载的 HLS 播放列表 —— 自动发现正确清单、解析多码率变体、补齐 `Referer`/`Origin`/`UA` 等鉴权头，交给 FluxDown 内置 HLS 引擎下载合并。页面只提供 DASH 清单（`.mpd`）时，也能把该地址交给核心的 DASH 引擎。
 
-> 适用场景：HLS（`.m3u8`）流媒体下载，兼带 DASH（`.mpd`）的**地址发现**。需要 FluxDown **最低 0.5.8**（v2.0.0 起把下载请求头改由 `resolve` 返回值的 `request` 补丁下发，该字段自 0.5.8 提供），推荐最新版。
+> 适用场景：HLS（`.m3u8`）流媒体下载，兼带 DASH（`.mpd`）的**地址发现**。需要 FluxDown **最低 0.5.8**（v2.0.0 起把下载请求头改由 `resolve` 返回值的 `request` 补丁下发，v2.1.0 起用 `interceptors` 做分片级去广告 —— 这两个能力都自 0.5.8 提供），推荐最新版。
 
 ## 功能特性
 
@@ -20,6 +20,7 @@
 - **反爬站处理（v1.7.0）**：自动通过站点的「安全检查」中转页，并在页面没有直接 m3u8 时**跟随内嵌播放器**（`<iframe>`）继续解析。两者**严格 fail-closed** —— 处理不了即退回原有行为，不会比不开启更差。
 - **相对地址修正（v1.4.1）**：插件沙箱是 QuickJS，**没有 `URL` 全局对象**；改用自实现的纯字符串解析（`parseUrl`/`absUrl`），并在返回前用 `assertOutputUrl` 兜底校验，出错时给可读提示而非引擎的隐晦报错。
 - **智能命名（v1.4.0）**：文件名按「页面标题 → 上层 ID 目录 → 文件名」决策链推导，**剔除 `index`/`playlist`/`master` 这类无信息量的基础名**；默认模板 `{title} {host}`，可自定义。
+- **分片级去广告（v2.1.0）**：下载前按播放列表里的广告标记丢弃广告分片（`interceptors.segments` 阶段），**默认关闭**。两档强度：只认 `CUE-OUT`/`CUE-IN` 与 `DATERANGE` 标注（保守），或叠加「极短分片 / 广告命名」推测（激进）。三条纪律内置：标记必须成对、不跨密钥与初始化段边界、不丢空也不丢超过八成。只对本插件解析出来的任务生效。
 - **下载后处理（可选，默认开）**：核心 remux 失败、或产物来自非 HLS 任务时用 ffmpeg 无损补转一次；核心未合并轨对时用 `-c copy` 补做合并。
 - **失败可观测**：`onError` 记录本插件任务的失败原因。
 
@@ -35,10 +36,12 @@
 ### 方式二：从构建产物目录安装（开发模式）
 
 1. `git clone` 本仓库并构建（见下节「开发」）：`npm ci && npm run build`。
-2. FluxDown → **设置 → 扩展 → 插件 → 从目录安装**，选择 **`dist/` 目录**（构建产物，含 `manifest.json` 与四个入口脚本）。
+2. FluxDown → **设置 → 扩展 → 插件 → 从目录安装**，选择 **`dist/` 目录**（构建产物，含 `manifest.json` 与五个入口脚本）。
 3. 改 `src/**/*.ts` 后需重新 `npm run build` 才生效；改根目录 `manifest.json` 后在客户端**重载插件**才生效。
 
 > v1.8.0 及更早版本的源码目录 `src/` 即插件本体，可直接选择安装；自 TypeScript 迁移后插件本体是 `dist/`，`src/` 不再含 `manifest.json`。
+
+> **从 2.0.x 升到 2.1.0 需要在客户端重新授权**：2.1.0 新增了 `intercept` 权限（拦截器）。引擎对已批准权限集合做**精确匹配**，新权限未批准时插件会装上但保持停用、显示「需要授权」—— 到插件页点一次授权即可，设置项与凭据都保留。
 
 > 相同 `identity`（`m3u8-resolver@cocolight`）再次安装会替换旧版本；换个 `identity` 会被视为另一个插件，设置项不互通。
 
@@ -61,7 +64,7 @@
 | [能力边界矩阵](docs/plugin-capability-matrix.md) | 核心与插件各自做了什么、哪些是官方接口的硬限制 |
 | [SDK 迁移方案](docs/sdk-migration-plan.md) | 插件系统换代（引擎 v0.5.8）后的能力变化、模块映射、分阶段里程碑与验收 |
 | [上游缺陷：`METHOD=NONE`](docs/upstream-m3u8-rs-method-none.md) | `m3u8-rs` 上游 IV 校验缺陷的复现、根因、四态矩阵与 PR 状态 |
-| [去广告方案调研笔记](docs/ad-removal-notes.md) | 历史调研：源码级论证、走过的死路与实测数据（已停用） |
+| [去广告方案调研笔记](docs/ad-removal-notes.md) | 历史调研：源码级论证、走过的死路与实测数据（旧方案已停用，v2.1.0 改由拦截器实现） |
 
 ## 工作原理（简述）
 
@@ -79,13 +82,14 @@
 4. 请求面以 `request` 补丁返回（v2.0.0）：`referrer`（优先播放页 URL）、`userAgent`、`setHeaders`（`Origin` + 自定义头）；若该站点存有登录凭据且**下载目标与其同源**，另附 `originHeaders`（`Cookie`/`Authorization` 等，只对该 origin 的请求生效）。同时标记 `rangeSupported` 以启用多线程分段。
 5. 下载完成后 `src/entry/hooks.ts` 的 `onDone`：核心合并失败时用 ffmpeg 补合并；开启 remux 时把非 `.mp4` 容器无损转封装为 `.mp4`。
 6. `onError` / `onCancel` 记录失败原因、清理任务标记。**钩子只对本插件经手的任务生效** —— resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/lib/handled.ts` 文件头）。
-7. 另有两条独立入口：`src/entry/auth.ts` 的 `authenticate(ctx)` 处理登录（由宿主以 `begin`/`poll`/`cancel`/`logout`/`status` 驱动）；`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举。四者构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
+7. 另有三个独立入口：`src/entry/auth.ts` 的 `authenticate(ctx)` 处理登录（由宿主以 `begin`/`poll`/`cancel`/`logout`/`status` 驱动）；`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举；`src/entry/intercept.ts` 的 `intercept(ctx)` 在 `segments` 阶段决定要不要丢弃广告分片（v2.1.0，默认关）。五者构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
 
 ## 安全与隐私
 
 - 插件只在你配置的「目标站点主机」或直链 `.m3u8` 上生效，不会处理无关页面（fail-closed）。订阅源的地址由你在订阅列表里显式添加。
-- 插件存储里只写入两类数据，**都不含任何 Cookie、Token 或凭据**：① 「本插件经手的任务 ID → 时间戳」标记（单键、上限 60 条、6 小时后自动过期）；② 剧集批量下载的清单条目映射（单键、上限 400 条；仅在条目 URL 过长或含 `@` 时才落盘），用于二段解析取回地址。
+- 插件存储里只写入两类数据，**都不含任何 Cookie、Token 或凭据**：① 「本插件经手的任务 ID → 时间戳」标记（单键、上限 300 条、6 小时后自动过期；v2.1.0 起拦截器也靠它判断归属，故上限由 60 调高）；② 剧集批量下载的清单条目映射（单键、上限 400 条；仅在条目 URL 过长或含 `@` 时才落盘），用于二段解析取回地址。
 - **登录凭据不落在插件存储里**：v1.6.0 起凭据经 `flux.auth` 交给 FluxDown 统一持久化（与站点绑定、按 `插件ID::站点` 引用），卸载插件即可一并清除；插件只在运行时读回使用。
+- **拦截器只看分片表，不外发任何数据（v2.1.0）**：`intercept` 只在 `segments` 阶段被调用，拿到的是一条轨道的分片元数据（地址、时长、标签、密钥信息）。判定是**纯本地计算** —— 不发网络请求、不写存储、不上报；返回的只是「丢弃哪几片」的 id 列表。关闭该功能时连任务标记都不读。
 - **凭据只对登记站点生效（v2.0.0 起由引擎按 origin 白名单强制）**：插件把凭据放进 `request.originHeaders`，只有 `scheme://host[:port]` 与「凭据登记站点」**完全一致**的请求才会附加 —— 清单在站内、分片在 CDN 的混合场景下，Cookie 不会跟着分片请求发出去。插件侧仍保留一道同源检查（不一致即整条不注入并记日志），两层叠加。用户手写在「额外请求头」里的内容属显式声明，不受该限制。
 - **下载请求头每次运行重放、不进任务记录（v2.0.0）**：`request` 补丁由官方语义保证「每次运行重放、绝不落库」，一次性签名链接与临时 Cookie 不会被写进任务数据库。
 - **防抓页 Cookie 只存在于单次解析的内存里**（v1.7.0）：解开挑战得到的 Cookie 仅用于本次解析内重取页面，**不写入插件存储、不落盘**，解析结束即随上下文丢弃。
@@ -106,13 +110,13 @@
 - **真正的 JS 指纹 / 验证码型防抓页无法处理**（v1.7.0）：插件沙箱既无 DOM 也无 JS 执行环境，只能覆盖「用内联脚本种 Cookie 后重载」这类**可解码**的校验形态。遇到指纹或验证码请改用浏览器扩展捕获或 yt-dlp。
 - **剧集/订阅的枚举依赖通用启发式**：只能枚举**写在静态 HTML 里**的分集链接。分集列表由前端 JS 调 API 渲染的站点（典型如 B 站番剧页 —— 实测其页面 `m3u8` 出现 0 次、站内分集链接仅 1 条、无 `__INITIAL_STATE__`）**无法枚举**，这不是缺陷而是通用启发式的天花板；这类站点请走 yt-dlp 委派。
 - **订阅（`subscriptions`）未列入 FluxDown 公开插件文档**：按引擎实现接入（自 v0.4.8 起提供），引擎升级后行为若有变化以引擎源码为准。`minAppVersion` 现为 `0.5.8`，由 `request` 补丁字段决定（见上）。
-- **去广告不在插件能力范围内**：插件层没有分片级钩子，只能整条 playlist 下载。v1.4.3 起已移除原有的「本地源头去广告」方案（详见下文）。
+- **去广告只覆盖 HLS，且只在「有标记或命名规整」时可靠（v2.1.0）**：插件现在能在 `interceptors.segments` 阶段丢弃广告分片，但这是**启发式**能力 —— 只认 `CUE-OUT`/`CUE-IN`、`DATERANGE` 与分片命名，不解码画面、不做音频指纹。DASH 任务不处理（分片编号语义不同，且没有 CUE 标记）。成对性、密钥边界、不丢空三条纪律由插件强制，宁可不动也不丢正片。
 
-## 已停用：本地源头去广告（v1.4.3 起）
+## 已停用：本地源头去广告（v1.4.3 – v2.0.0）
 
 插件曾支持「下载前把 playlist 改写为指向本地清洗服务的地址，由服务剔掉广告段」（旧称「增强 C」）。**自 v1.4.3 起该能力整体停用**：`adClean` / `adCleanServer` 两个设置项已从 manifest 移除，resolver 不再改写任何返回的 URL；`adfilter/` 目录保留在仓库中但**不再维护**，与插件之间已无任何对接通道。
 
-若确需去广告，只能回退到 **v1.8.0 的 `resolver.js` 里被注释掉的「增强 C」小节**（该文件现作为回归基线保存在 `tests/legacy/resolver.js`，原实现完整保留）。方案论证与实测数据见 [`docs/ad-removal-notes.md`](docs/ad-removal-notes.md)，服务用法见 [`adfilter/README.md`](adfilter/README.md)。
+**v2.1.0 起改用引擎的拦截平面重做**（见上文「分片级去广告」设置项）：不再需要外部进程，插件拿到的是引擎已解析好的分片表，只需返回要丢的 id 列表。旧的「增强 C」源码仍作为回归基线保存在 `tests/legacy/resolver.js`，仅作历史参考 —— **不要**再恢复它。历史方案论证与实测数据见 [`docs/ad-removal-notes.md`](docs/ad-removal-notes.md)。
 
 ## 文件结构
 
@@ -122,25 +126,27 @@
 ├── fluxdown-plugin.config.json      # 构建配置：TS 入口 → 产物文件名映射
 ├── package.json / tsconfig.json     # 构建与类型检查配置
 ├── src/                             # 源码（TypeScript，构建后打包进 dist/）
-│   ├── entry/                       # 四个插件入口，各自对应一个独立 QuickJS 上下文
+│   ├── entry/                       # 五个插件入口，各自对应一个独立 QuickJS 上下文
 │   │   ├── resolver.ts              # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
 │   │   ├── hooks.ts                 # 钩子：onDone（轨对合并兜底 / remux）、onError、onCancel（清标记）
 │   │   ├── auth.ts                  # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
-│   │   └── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
+│   │   ├── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
+│   │   └── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
 │   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
-│   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts ... 
+│   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts adrules.ts ...
 │   └── types.ts                     # 内部共享类型
 ├── tests/
 │   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（不参与构建）
 │   ├── parity.mjs                   # 行为比对器：同一批 fixture 分别喂给 legacy 与 dist
 │   ├── parity/scenarios.mjs         # 67 个 fixture（直链 / 播放页 / 剧集 / DASH / 鉴权 / 订阅 / 钩子）
 │   ├── parity/face.mjs              # 请求面同义归并：extraHeaders 与 request 补丁比「最终生效值」
-│   ├── parity/harness.mjs           # 假宿主（日志 / 宿主调用 / 返回值三路记录），两个测试共用
-│   └── contract.mjs                 # M2 请求面契约：凭据只走 originHeaders、Basic 编码、不落库
+│   ├── parity/harness.mjs           # 假宿主（日志 / 宿主调用 / 返回值三路记录），三个测试共用
+│   ├── contract.mjs                 # M2 请求面契约：凭据只走 originHeaders、Basic 编码、不落库
+│   └── intercept.mjs                # M3 拦截器契约：成对丢弃、密钥边界、不丢空、归属判定
 ├── dist/                            # ← 构建产物 = 插件本体（「从目录安装」指向此目录；不入库）
-├── adfilter/                        # 本地去广告清洗服务（独立进程）—— 已归档、不再维护，插件不再对接
+├── adfilter/                        # 早期本地去广告清洗服务（独立进程）—— 已归档，v2.1.0 起由拦截器取代
 ├── docs/
-│   ├── configuration.md             # 配置说明：24 个设置项的作用 / 配置 / 效果 / 示例
+│   ├── configuration.md             # 配置说明：26 个设置项的作用 / 配置 / 效果 / 示例
 │   ├── plugin-capability-matrix.md  # 插件能力边界（已对照官方 API 核实）
 │   ├── sdk-migration-plan.md        # 插件系统换代（v0.5.8）后的 SDK 迁移方案与里程碑
 │   ├── dash-discovery-plan.md       # v1.8.0 DASH 发现层开发计划（含遗留验证收口）
@@ -166,6 +172,7 @@ npm run build     # 构建 → dist/（含 manifest.json 拷贝）
 npm run validate  # 校验 manifest 与产物是否符合插件规范（装机前跑）
 npm run parity    # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场景比对，要求 0 差异
 npm run contract  # 请求面契约：凭据只走 originHeaders、Basic 的 UTF-8 编码、凭据不落库
+npm run intercept # 拦截器契约：成对丢弃、不跨密钥边界、不丢空、只碰本插件任务
 npm run pack      # 打包 .fxplug
 ```
 

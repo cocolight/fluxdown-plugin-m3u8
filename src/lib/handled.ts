@@ -11,7 +11,14 @@
 
 const HANDLE_KEY = "handledTasks";
 const HANDLE_TTL_MS = 6 * 3600 * 1000;
-const HANDLE_MAX = 60;
+/**
+ * 条数上限。v1.8.0 是 60 —— 那时标记只决定 hooks 要不要做后处理，挤掉几条只是少做一次
+ * remux。v2.1 起它同时是拦截器的准入凭证（`segments` 阶段据此判断「这个任务该不该去广告」），
+ * 批量剧集一次建 200 个任务时，60 条上限会把先建的标记挤掉，表现为「前面的集数不去广告、
+ * 后面的去」这种半失效。取 300：覆盖默认 `manifestMaxItems`（200）加音轨任务的余量，
+ * 序列化后约 20 KB，仍在单键存储的合理范围内。
+ */
+const HANDLE_MAX = 300;
 
 async function readHandled(): Promise<Record<string, number>> {
   try {

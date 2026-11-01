@@ -378,7 +378,7 @@ globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物
 | --- | --- | --- | --- |
 | **M1 工程化** | 建 SDK 项目骨架、拆 `lib/*`、`manifest.json` 移到根、`npm run build` + `validate` 通过；四个入口行为等价 | 同一批 URL（直链 m3u8 / media playlist / 播放页 / 剧集页 / mpd / 需登录站）下载结果与 1.8.0 逐字一致；`dist` 目录可被"从目录安装"加载 | **已完成**（见 8.1） |
 | **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 | **已完成**（见 8.3） |
-| **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 | 待开始 |
+| **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 | **已完成**（2.1.0） |
 | **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；（实测通过后）`finalize.replaceWith` | 删除任务时产物一并删除；不再出现孤立 `.ts`；`maxRangeBytes` 站点可多线程 | 待开始 |
 | **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" | 待定 |
 
@@ -473,6 +473,47 @@ dist/（不入库）                                .github/workflows/ci.yml
 
 ---
 
+### 8.4 M3 落地结果（2026-11-01，版本 2.1.0）
+
+**结构**：新增第五个入口 `src/entry/intercept.ts`（`globalThis.intercept`）与 `src/lib/adrules.ts`（纯规则引擎）。
+manifest 加 `interceptors` 段（`stages:["segments"]`、`match.urls:["*://*/*"]`、`timeoutMs:5000`、`onFailure:"continue"`）、
+`permissions` 加 `intercept`、settings 加 `adRulesMode` / `adRulesExtra`（共 26 项，新项默认 `off`）。
+
+**与方案原稿的三处偏离**
+
+1. **「丢超过一半就放弃」改成「超过八成」**。原稿的 50% 阈值在短片测试流里会误杀：5 段 6 秒的正片插一个 30 秒广告块
+   就是 3/5。真实剧集里广告占比通常 10–20%，80% 才是「规则错配」的可信信号。纪律 3 的本意（不许丢空）由
+   `drop >= n` 单独兜住，比例阈值只是第二道闸。
+2. **`dropHosts` 按单段 URI 的主机名精确匹配，不是整条 playlist 的 host**。原稿示例
+   `{"dropHosts":["ads.cdn.com"]}` 若按 playlist 判断，等于整条流都丢 → 直接触发纪律 3 → 功能永久失效。
+   按段判断才有意义（同一流里混排正片与本插件不认识的广告 CDN 是常见形态）。
+3. **`handledTasks` 上限 60 → 300**。v1.8.0 里这个标记只决定 hooks 要不要做后处理，挤掉几条只是少做一次 remux；
+   v2.1.0 起它同时是拦截器的准入凭证。批量建 200 集时，60 条上限会把先建的标记挤掉，表现为**前面几集不去广告、
+   后面去**的半失效。300 覆盖默认 `manifestMaxItems`（200）加音轨余量，序列化约 20 KB。
+
+**验收口径**：拦截器是新增入口，legacy 基线里没有 `intercept.js`，**没有「等价」可比**，全部靠契约断言。
+`tests/intercept.mjs` 共 33 项，覆盖：fail-closed 的六种入口（关闭 / 未配置 / 无标记 / 别的任务 / 非 segments 阶段 / DASH / 空表）、
+CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATERANGE 的 interstitial 与 SCTE35 属性、
+纪律 2（密钥边界 / 初始化段边界各一例正反）、纪律 3（丢空、超八成、六成放行）、
+模式差异（marker 不猜 / heuristic 猜）、命名只看 path 不看 host、用户规则（dropHosts 精确、keepPath 豁免、dropPath 强执行、JSON 写坏只 warn）、
+400 段规模、200 条标记并存。
+
+**变异自检**（确认断言不是空跑）：
+- 把 `boundarySafe()` 改成 `return true` → 2 项失败（两条纪律 2 用例）；
+- 删掉 `isHandled()` 归属判定 → 2 项失败（两条归属用例）。
+
+**回归**：`parity` 仍 67/67（拦截器不参与 legacy 比对），`contract` 22/22，`validate` = `valid (risk: elevated)`。
+
+**留给装机验证的三件事（新增到第九节 #11–#13）**
+
+1. `CUE-OUT` 究竟落在广告的**第一段**还是**前一段正片**上。当前实现丢 `[OUT..IN]` 含两端，
+   若某些打包器把 OUT 打在正片末段上，会削掉 6 秒正片 —— 需要用真实流对照。
+2. `segments` 阶段能否读到 `ctx.task.id`，且它与 `resolve` 收到的 `ctx.taskId` 是同一个值。
+   不是同一个值的话归属判定全线失效（表现：去广告永远不生效，但下载不受影响）。
+3. 丢弃分片后引擎的**续传**行为：文档说会干净重来，需要确认不会留下半截旧分片导致产物时长错乱。
+
+---
+
 ## 九、待实测验证清单（装机必做，按优先级）
 
 | # | 待验点 | 为什么重要 | 判定方法 |
@@ -487,6 +528,10 @@ dist/（不入库）                                .github/workflows/ci.yml
 | 8 | `request.referrer` / `userAgent` 是否对**分片请求**生效 | 若只作用于清单请求，防盗链站的分片会被 403；M2 的整个请求面都押在这条上 | 抓包看 `.ts` 请求是否带 Referer；对比「只设 referrer」与「同时塞同名头」两种写法的成功率 |
 | 9 | `originHeaders` 与 `setHeaders` 的同名头优先级 | 决定用户手写的 Cookie 能否盖过档案 Cookie（应能） | 档案 Cookie 与 extraHeadersRaw 各写一个同名 Cookie，看服务端收到哪个 |
 | 10 | 0.5.8 之前的客户端遇到 `request` 字段的裁决 | 决定 `minAppVersion` 能不能留 `0.4.8`（现按 0.5.8 处理，属保守选择） | 在 0.4.x 客户端装 2.0.0 包，看是「插件被跳过」「解析失败」还是「忽略该字段」 |
+| 11 | `CUE-OUT` 落在广告第一段还是前一段正片 | 决定丢 `[OUT..IN]` 含两端会不会削掉 6 秒正片 | 找一条带真实广告的 SCTE-35 流，对照产物时长与画面切换点 |
+| 12 | `segments` 阶段的 `ctx.task.id` 与 `resolve` 的 `ctx.taskId` 是否同值 | 归属判定的唯一依据；不同值 = 去广告永远不生效（不误伤，但功能哑火） | 两边各记一条 `flux.logger.info`，对比同一次下载 |
+| 13 | 丢弃分片后引擎的续传行为 | 文档说会干净重来；需确认不留半截旧分片导致时长错乱 | 下到 50% 后开启去广告重跑同一任务，比对产物时长 |
+| 14 | 真实流上 `interceptors` 的调用次数与耗时 | 熔断是「连续 3 次超时 → 插件整体禁用」，会连带停掉 resolver | 200 集批量任务下看审计日志 `intercept.segments` 条数与是否有超时 |
 
 ---
 
@@ -503,13 +548,14 @@ dist/（不入库）                                .github/workflows/ci.yml
 
 ---
 
-## 附：manifest 骨架（v2.0.0 草案）
+## 附：manifest 骨架（草案，已随 M1–M3 落地）
 
+> 以仓库根目录 `manifest.json` 为准；本段仅保留设计意图（为什么这些字段长这样）。
 ```json
 {
   "identity": "m3u8-resolver@cocolight",
   "name": "M3U8 发现与变体解析器",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "minAppVersion": "0.5.8",
   "description": "把播放页或 .m3u8 链接解析成可下载的 HLS 播放列表：自动选清晰度、补齐防盗链请求头，支持剧集批量、登录站点、订阅追更、反爬站处理与分片级去广告。",
   "homepage": "https://github.com/cocolight/fluxdown-plugin-m3u8",

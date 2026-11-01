@@ -96,16 +96,16 @@
 
 **汇总**：共 22 项 —— 独占 **17 项**（含「按编码筛画质」「DASH 发现层」，兼具增益属性）、增益 **3 项**、重叠·条件性 **1 项**、必要自保 **1 项**。
 
-插件**确定独有的能力**收敛为五类：**播放页发现 + 鉴权、选轨 · 纯音频、剧集页批量枚举、登录 / 订阅 / 反爬站、清单发现（HLS + DASH）**。
+插件**确定独有的能力**收敛为六类：**播放页发现 + 鉴权、选轨 · 纯音频、剧集页批量枚举、登录 / 订阅 / 反爬站、清单发现（HLS + DASH）、分片级去广告（v2.1.0）**。
 其余在「装了浏览器扩展 + 用浏览器触发下载」的前提下会被核心或扩展覆盖。
 
-> **去广告已下线**：插件曾提供「改写 playlist 指向本地清洗服务」的广告段剔除能力，**自 `v1.4.3` 起整体停用**（`adClean` / `adCleanServer` 设置项已从 manifest 移除）。恢复要点与调研记录见 [ad-removal-notes.md](ad-removal-notes.md)。
+> **去广告：v1.4.3 下线，v2.1.0 以另一种形态回归**。旧方案是「改写 playlist 指向本地清洗服务」（`adClean` / `adCleanServer`，已从 manifest 移除），已随 `v1.4.3` 停用。`v2.1.0` 起改用引擎的**拦截平面**：`interceptors.segments` 阶段拿到引擎已解析好的分片表，插件只需返回要丢弃的 `id` 列表 —— 不再需要外部进程，也不再自己绝对化分片地址。旧方案记录见 [ad-removal-notes.md](ad-removal-notes.md)。
 
 ---
 
 ## 4. 硬限制（接口不存在，别再尝试）
 
-- **字幕（WebVTT）**：`resolve()` 返回字段**穷举**为 `url` / `audioUrl` / `fileName` / `totalBytes` / `extraHeaders` / `ephemeral` / `rangeSupported` / `variants` / `defaultVariantIndex` —— **没有字幕字段**；且 `flux.fs` 与 ffmpeg 沙箱是两个独立工作区，抓到的字幕文件送不进去。插件**只能识别并记录**字幕轨，无法下载 / 封装 / 烧录。
+- **字幕（WebVTT）**：`resolve()` 返回字段**穷举**为 `url` / `audioUrl` / `fileName` / `totalBytes` / `extraHeaders` / `request` / `ephemeral` / `rangeSupported` / `variants` / `defaultVariantIndex` / `manifest` —— **没有字幕字段**；且 `flux.fs` 与 ffmpeg 沙箱是两个独立工作区，抓到的字幕文件送不进去。插件**只能识别并记录**字幕轨，无法下载 / 封装 / 烧录。
 - **插件不能创建任务**：`flux.task` 只有 `requestRetry`（且仅在 `onError` 有效），无分组 CRUD、无任务查询。**但引擎会据插件输出代为建任务** —— 清单（`manifest`）→ 裂变建组，订阅条目 → 建任务。插件自身始终不建任务。
 - **`onMetaProbed` 永不触发**：带 resolver 的插件该钩子不生效（官方明确），故 manifest 不订阅它。`onStart` 亦未订阅（仅日志、徒增噪音）。
 - **`hooks.match` 只按任务原始 URL 过滤**：播放页 URL 不含 `m3u8` ⇒ 会漏掉所有钩子，故插件改用 `taskId` 存储标记来判断「是不是本插件经手的任务」。
@@ -136,6 +136,7 @@
 | 1.7.0 | 防抓页校验、内嵌播放器跟随 | **无新增引擎字段**（仅 `flux.fetch` + 设置项） | `0.4.8`（不可回落） |
 | 1.8.0 | DASH 发现层（页面抠 `.mpd` + 直链 `.mpd` 放行） | **无新增引擎字段**（仅正则 + `flux.fetch` + 设置项） | `0.4.8`（不可回落） |
 | 2.0.0 | 构建工程化（TypeScript + SDK）；下载请求头改由 `ResolveResult.request` 补丁下发，凭据走 `originHeaders` 白名单 | `ResolveResult.request`（`RequestPatch`，与 `prepare` 阶段同形，引擎 **v0.5.8** 起） | **`0.5.8`**（不可回落） |
+| 2.1.0 | 分片级去广告（`interceptors.segments`，默认关）；新增 `intercept` 权限 | `interceptors` 拦截平面 + `SegmentItem`（引擎 **v0.5.8** 起） | `0.5.8`（不变） |
 
 ★ **`minAppVersion` 救不了旧版**：manifest 为 `deny_unknown_fields` —— 旧版 FluxDown 见到 `multi` / `subscriptions` / `auth` 会**拒绝整份 manifest**（表现为插件被跳过，而非忽略该字段）。`minAppVersion` 是在 **serde 解析成功之后**才检查的，此时旧版早已解析失败。因此：
 

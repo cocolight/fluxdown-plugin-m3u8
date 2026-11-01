@@ -35,3 +35,7 @@ jobs:
       # 请求面契约：M2 起凭据只经 originHeaders 下发、Basic 的 UTF-8 编码正确、凭据不落库。
       - name: 请求面契约
         run: npm run contract
+
+      # 拦截器契约：M3 起 segments 阶段去广告 —— 成对丢弃、不跨密钥边界、不丢空、只碰本插件任务。
+      - name: 拦截器契约
+        run: npm run intercept
