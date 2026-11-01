@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 构建
+        run: npm run build
+
+      - name: 校验 manifest 与产物
+        run: npm run validate
+
+      # 行为回归：dist/ 与 tests/legacy/（v1.8.0 基线）必须逐场景一致。
+      # 重构安全网 —— 出现差异说明改动并非「行为等价」，需说明原因或修回。
+      - name: 行为回归比对
+        run: npm run parity

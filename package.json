@@ -1,0 +1,23 @@
+{
+  "name": "fluxdown-plugin-m3u8",
+  "version": "1.8.0",
+  "private": true,
+  "type": "module",
+  "description": "FluxDown M3U8 发现与变体解析器（TypeScript + plugin SDK 构建）",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "fluxdown-plugin build",
+    "dev": "fluxdown-plugin dev",
+    "validate": "fluxdown-plugin validate",
+    "pack": "fluxdown-plugin pack",
+    "typecheck": "tsc --noEmit",
+    "parity": "node tests/parity.mjs"
+  },
+  "devDependencies": {
+    "fluxdown-plugin-sdk": "^0.5.0",
+    "typescript": "^5.9.3"
+  }
+}

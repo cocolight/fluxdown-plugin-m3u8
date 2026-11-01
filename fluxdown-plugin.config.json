@@ -1,0 +1,8 @@
+{
+  "entries": {
+    "resolver.js": "src/entry/resolver.ts",
+    "hooks.js": "src/entry/hooks.ts",
+    "auth.js": "src/entry/auth.ts",
+    "subscribe.js": "src/entry/subscribe.ts"
+  }
+}

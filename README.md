@@ -32,11 +32,13 @@
    - 新版桌面端也支持直接把 `.fxplug` 当作 `.zip` 选择。
 3. 在插件列表启用，并按需修改设置。
 
-### 方式二：从源码目录安装（开发模式）
+### 方式二：从构建产物目录安装（开发模式）
 
-1. 把本仓库 `git clone` 到本地。
-2. FluxDown → **设置 → 扩展 → 插件 → 从目录安装**，选择 **`src/` 目录**（即含 `manifest.json` 的那一层）。
-3. 开发模式下修改 `src/*.js` 存盘即热生效，方便调试。
+1. `git clone` 本仓库并构建（见下节「开发」）：`npm ci && npm run build`。
+2. FluxDown → **设置 → 扩展 → 插件 → 从目录安装**，选择 **`dist/` 目录**（构建产物，含 `manifest.json` 与四个入口脚本）。
+3. 改 `src/**/*.ts` 后需重新 `npm run build` 才生效；改根目录 `manifest.json` 后在客户端**重载插件**才生效。
+
+> v1.8.0 及更早版本的源码目录 `src/` 即插件本体，可直接选择安装；自 TypeScript 迁移后插件本体是 `dist/`，`src/` 不再含 `manifest.json`。
 
 > 相同 `identity`（`m3u8-resolver@cocolight`）再次安装会替换旧版本；换个 `identity` 会被视为另一个插件，设置项不互通。
 
@@ -44,7 +46,7 @@
 
 - **直链**：直接把 `https://.../xxx.m3u8` 丢给 FluxDown，插件自动判断 master / media 并带好鉴权头。`.mpd` 直链也会被识别并交给核心 DASH 引擎。
 - **播放页**：先在设置里填好「目标站点主机」，再把播放页 URL 交给 FluxDown；插件会从页面抠出 m3u8（找不到时再试 `.mpd`）。
-  - 复杂站点若兜底正则抠不出，请按站点结构自定义 `src/resolver.js` 里的 `extractMaster()`。
+  - 复杂站点若兜底正则抠不出，请按站点结构自定义 `src/lib/discovery.ts` 里的 `extractMaster()`。
 - **画质**：未开「自动选择」时会弹出画质选择框，默认选中按「偏好画质 + 偏好编码」算出的变体。
 - **剧集页**：页面含多集结构时，提交后会先弹出**选集窗口**，勾选即可批量下载；误判或漏判可关开关或用「自定义剧集链接正则」纠正。
 - **需要登录的站点**：把凭据填进「登录凭据」即可（四种写法见配置说明）。
@@ -57,12 +59,13 @@
 | --- | --- |
 | [配置说明](docs/configuration.md) | 全部 24 个设置项：作用 / 怎么配 / 效果 / 示例，含登录、订阅、命名等配置细节 |
 | [能力边界矩阵](docs/plugin-capability-matrix.md) | 核心与插件各自做了什么、哪些是官方接口的硬限制 |
+| [SDK 迁移方案](docs/sdk-migration-plan.md) | 插件系统换代（引擎 v0.5.8）后的能力变化、模块映射、分阶段里程碑与验收 |
 | [上游缺陷：`METHOD=NONE`](docs/upstream-m3u8-rs-method-none.md) | `m3u8-rs` 上游 IV 校验缺陷的复现、根因、四态矩阵与 PR 状态 |
 | [去广告方案调研笔记](docs/ad-removal-notes.md) | 历史调研：源码级论证、走过的死路与实测数据（已停用） |
 
 ## 工作原理（简述）
 
-1. `src/resolver.js` 的 `resolve(ctx)` 判断作用域：
+1. `src/entry/resolver.ts` 的 `resolve(ctx)` 判断作用域：
    - 直链 `.m3u8` → 直接拉取；直链 `.mpd` → 直接返回，交给核心 DASH 引擎（不抓取）。
    - 播放页 → 抓页源码，正则抠 `master.m3u8`；抠不到且开启 `detectDash` 时再试抠 `.mpd`（v1.8.0），
      命中则把该地址原样返回给核心 DASH 引擎。
@@ -74,9 +77,9 @@
    （`.mpd` 分支**不做**该校验 —— 插件不读 DASH 清单内容，合法性由核心判定。）
 3. 解析 `#EXT-X-STREAM-INF` 变体与 `#EXT-X-MEDIA` 音轨，按带宽排序，依「偏好编码 + 偏好画质」算默认变体（或列出供手选），并给每个变体配上 `audioUrl`。
 4. 返回结果带上 `Referer`（优先播放页 URL）/ `Origin` / `User-Agent` / 自定义头；若该站点存有登录凭据且**下载目标与其同源**，则一并并入 `Cookie`/`Authorization` 等（v1.6.0）。同时标记 `rangeSupported` 以启用多线程分段。
-5. 下载完成后 `src/hooks.js` 的 `onDone`：核心合并失败时用 ffmpeg 补合并；开启 remux 时把非 `.mp4` 容器无损转封装为 `.mp4`。
-6. `onError` / `onCancel` 记录失败原因、清理任务标记。**钩子只对本插件经手的任务生效** —— resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/hooks.js` 文件头）。
-7. 另有两条独立入口：`src/auth.js` 的 `authenticate(ctx)` 处理登录（由宿主以 `begin`/`poll`/`cancel`/`logout`/`status` 驱动）；`src/subscribe.js` 的 `subscribe(ctx)` 处理订阅枚举。三者是**彼此独立的 QuickJS 上下文**，不共享作用域。
+5. 下载完成后 `src/entry/hooks.ts` 的 `onDone`：核心合并失败时用 ffmpeg 补合并；开启 remux 时把非 `.mp4` 容器无损转封装为 `.mp4`。
+6. `onError` / `onCancel` 记录失败原因、清理任务标记。**钩子只对本插件经手的任务生效** —— resolver 会把 `taskId` 写入插件存储作为标记，hooks 据此判断（理由见 `src/lib/handled.ts` 文件头）。
+7. 另有两条独立入口：`src/entry/auth.ts` 的 `authenticate(ctx)` 处理登录（由宿主以 `begin`/`poll`/`cancel`/`logout`/`status` 驱动）；`src/entry/subscribe.ts` 的 `subscribe(ctx)` 处理订阅枚举。四者构建后是**彼此独立的 QuickJS 上下文**，运行时无法互相引用 —— 共享逻辑靠构建期打包（源码侧正常 `import` 即可）。
 
 ## 安全与隐私
 
@@ -108,22 +111,34 @@
 
 插件曾支持「下载前把 playlist 改写为指向本地清洗服务的地址，由服务剔掉广告段」（旧称「增强 C」）。**自 v1.4.3 起该能力整体停用**：`adClean` / `adCleanServer` 两个设置项已从 manifest 移除，resolver 不再改写任何返回的 URL；`adfilter/` 目录保留在仓库中但**不再维护**，与插件之间已无任何对接通道。
 
-若确需去广告，只能自行恢复 `src/resolver.js` 里被注释掉的「增强 C」小节（原实现完整保留在那里）。方案论证与实测数据见 [`docs/ad-removal-notes.md`](docs/ad-removal-notes.md)，服务用法见 [`adfilter/README.md`](adfilter/README.md)。
+若确需去广告，只能回退到 **v1.8.0 的 `resolver.js` 里被注释掉的「增强 C」小节**（该文件现作为回归基线保存在 `tests/legacy/resolver.js`，原实现完整保留）。方案论证与实测数据见 [`docs/ad-removal-notes.md`](docs/ad-removal-notes.md)，服务用法见 [`adfilter/README.md`](adfilter/README.md)。
 
 ## 文件结构
 
 ```text
-.                                    # 仓库根（非插件本体，含附属内容）
-├── src/                             # ← 插件本体（「从目录安装」/开发模式指向此目录）
-│   ├── manifest.json                # 插件清单（identity、权限、设置、entry、auth、subscriptions）
-│   ├── resolver.js                  # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
-│   ├── hooks.js                     # 钩子：onDone（轨对合并兜底 / remux）、onError、onCancel（清标记）
-│   ├── auth.js                      # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
-│   └── subscribe.js                 # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
+.                                    # 仓库根（构建工程，非插件本体）
+├── manifest.json                    # 插件清单源文件（identity、权限、设置、entry、auth、subscriptions）
+├── fluxdown-plugin.config.json      # 构建配置：TS 入口 → 产物文件名映射
+├── package.json / tsconfig.json     # 构建与类型检查配置
+├── src/                             # 源码（TypeScript，构建后打包进 dist/）
+│   ├── entry/                       # 四个插件入口，各自对应一个独立 QuickJS 上下文
+│   │   ├── resolver.ts              # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
+│   │   ├── hooks.ts                 # 钩子：onDone（轨对合并兜底 / remux）、onError、onCancel（清标记）
+│   │   ├── auth.ts                  # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
+│   │   └── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
+│   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
+│   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts ... 
+│   └── types.ts                     # 内部共享类型
+├── tests/
+│   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（不参与构建）
+│   ├── parity.mjs                   # 行为比对器：同一批 fixture 分别喂给 legacy 与 dist
+│   └── parity/scenarios.mjs         # 67 个 fixture（直链 / 播放页 / 剧集 / DASH / 鉴权 / 订阅 / 钩子）
+├── dist/                            # ← 构建产物 = 插件本体（「从目录安装」指向此目录；不入库）
 ├── adfilter/                        # 本地去广告清洗服务（独立进程）—— 已归档、不再维护，插件不再对接
 ├── docs/
 │   ├── configuration.md             # 配置说明：24 个设置项的作用 / 配置 / 效果 / 示例
 │   ├── plugin-capability-matrix.md  # 插件能力边界（已对照官方 API 核实）
+│   ├── sdk-migration-plan.md        # 插件系统换代（v0.5.8）后的 SDK 迁移方案与里程碑
 │   ├── dash-discovery-plan.md       # v1.8.0 DASH 发现层开发计划（含遗留验证收口）
 │   ├── ad-removal-notes.md          # 去广告方案调研笔记（源码级论证 / 实测 / TODO）
 │   ├── upstream-m3u8-rs-method-none.md        # METHOD=NONE 上游缺陷的证据链与 PR 状态
@@ -133,10 +148,25 @@
 └── README.md
 ```
 
-> **插件本体就是 `src/` 目录。** `manifest.json` 必须位于插件文件夹根（即 `src/` 内），
-> `entry` 使用同目录相对路径（`resolver.js` / `hooks.js` / `auth.js` / `subscribe.js`）。
-> 四个脚本是**彼此独立的 QuickJS 上下文**，不能互相 `require`，共享的纯函数只能逐文件复制。
-> 开发模式下改 `src/*.js` 存盘即热生效。
+> **插件本体是构建产物 `dist/` 目录。** `manifest.json` 位于仓库根，构建时原样拷入 `dist/`；
+> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `auth.js` / `subscribe.js`）。
+> 构建后四个脚本仍是**彼此独立的 QuickJS 上下文**，运行时不能互相引用；
+> 源码侧可以正常 `import`，共享逻辑由构建期打包进各入口（代价是同一模块会在多个产物里各存一份）。
+
+## 开发
+
+```bash
+npm ci            # 安装依赖（fluxdown-plugin-sdk + typescript）
+npm run typecheck # 类型检查：tsc --noEmit
+npm run build     # 构建 → dist/（含 manifest.json 拷贝）
+npm run validate  # 校验 manifest 与产物是否符合插件规范（装机前跑）
+npm run parity    # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场景比对，要求 0 差异
+npm run pack      # 打包 .fxplug
+```
+
+- **改行为前先跑 `npm run parity`**：它是重构的安全网 —— 任何「以为等价、实际不等价」的改动都会落到具体场景与字段上。
+- `tests/legacy/` 是冻结的基线，**不要修改**；基线若需更新（有意改变行为），应在提交说明里写清差异场景。
+- 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT）：产物里不含 SDK 运行时，授权链保持干净。
 
 ## 许可证
 
