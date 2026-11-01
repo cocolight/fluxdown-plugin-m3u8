@@ -372,13 +372,58 @@ globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物
 
 ## 八、分阶段实施与验收
 
-| 里程碑 | 内容 | 验收标准 |
-| --- | --- | --- |
-| **M1 工程化** | 建 SDK 项目骨架、拆 `lib/*`、`manifest.json` 移到根、`npm run build` + `validate` 通过；四个入口行为等价 | 同一批 URL（直链 m3u8 / media playlist / 播放页 / 剧集页 / mpd / 需登录站）下载结果与 1.8.0 逐字一致；`dist` 目录可被"从目录安装"加载 |
-| **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 |
-| **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 |
-| **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；（实测通过后）`finalize.replaceWith` | 删除任务时产物一并删除；不再出现孤立 `.ts`；`maxRangeBytes` 站点可多线程 |
-| **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" |
+| 里程碑 | 内容 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| **M1 工程化** | 建 SDK 项目骨架、拆 `lib/*`、`manifest.json` 移到根、`npm run build` + `validate` 通过；四个入口行为等价 | 同一批 URL（直链 m3u8 / media playlist / 播放页 / 剧集页 / mpd / 需登录站）下载结果与 1.8.0 逐字一致；`dist` 目录可被"从目录安装"加载 | **已完成**（见 8.1） |
+| **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 | 待开始 |
+| **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 | 待开始 |
+| **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；（实测通过后）`finalize.replaceWith` | 删除任务时产物一并删除；不再出现孤立 `.ts`；`maxRangeBytes` 站点可多线程 | 待开始 |
+| **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" | 待定 |
+
+### 8.1 M1 落地结果（2026-11-01）
+
+工程结构：
+
+```text
+manifest.json（源，构建拷入 dist/）      fluxdown-plugin.config.json（入口映射）
+src/entry/{resolver,hooks,auth,subscribe}.ts   ← 四个入口，各对应一个 QuickJS 上下文
+src/lib/*.ts（17 个模块）                      ← 共享纯函数，构建期打包
+tests/legacy/*.js（v1.8.0 原文件，冻结基线）    tests/parity.mjs + tests/parity/scenarios.mjs
+dist/（不入库）                                .github/workflows/ci.yml
+```
+
+入口拆分与原 4 文件的对应关系：`resolver.js` → `entry/resolver.ts` + `lib/{url,settings,text,naming,hls,patterns,discovery,env,http,request,audio,hash,handled,items,install}.ts`；
+`hooks.js` → `entry/hooks.ts` + `lib/{handled,install,settings}.ts`；`auth.js` → `entry/auth.ts`；`subscribe.js` → `entry/subscribe.ts`。
+原来四处复制粘贴的 `parseUrl/absUrl/hostOf`、`collectEpisodeLinks` ↔ `collectItems` 现为**同一份实现**。
+
+验收口径的落地方式：**不靠人工对比下载结果**，而是把「行为」拆成四个可比对的观测面 ——
+返回值、抛错信息、`flux.logger` 日志序列、宿主调用序列（`fetch` URL+头+方法、`auth.get/save`、`storage.get/set`、`ffmpeg.run`、`ytdlp.run`）。
+同一批 67 个 fixture 分别喂给旧实现与 `dist/`，逐字段比对，要求 **0 差异**。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck`（`tsc --noEmit`） | 通过 |
+| `npm run build` | 通过，产物 4 个 `.js` + `manifest.json`（共 ~82 KB） |
+| `npm run validate` | `valid (risk: elevated)` —— elevated 来自既有 `auth` / `ffmpeg` 权限，非新增 |
+| `npm run parity` | **67/67 场景一致** |
+| 变异自检 | 故意改坏一处字符串 → 15 个场景报差异，确认比对器不会"假绿" |
+| 产物许可证洁净度 | `dist/*.js` 中 SDK 运行时命中数为 **0**（全程只用 `import type`） |
+
+开发工作流因此变更（对使用者是 breaking）：**「从目录安装」自本版起指向 `dist/`**，`src/` 不再含 `manifest.json`。
+`.fxplug` 发布包内容不变，故已装用户无感。
+
+### 8.2 M1 期间发现的工程事实
+
+1. **构建的 manifest 拷贝在本机沙箱会 EPERM**：`fluxdown-plugin build` 用 `copyfile` 拷 `manifest.json` → `dist/`，
+   而沙箱安全策略拦截了 `dist/` 上的 `utimensat`，导致 `EPERM`。`cp` 可绕过（无 `utimes` 调用）。
+   这是**本机沙箱现象**，GitHub Actions 与普通开发机上不会出现，因此未进仓库做 workaround。
+2. **`validate` 报 `elevated` 而不是 `valid`**：风险等级取插件声明的最高权限（`auth` 读取凭据、`ffmpeg` 执行外部程序），
+   与本次迁移无关；M2 若去掉凭据自持逻辑，等级也不会降 —— `ffmpeg` 仍在用。
+3. **`tsconfig` 的 `lib` 不含 DOM 是有牙齿的**：`new URL` / `btoa` 在编译期即失败，正是 `resolver.js` 里记录过的那次事故
+   （自实现的上游函数被 `URL` 误用替代，静默打瘫四个函数）。迁移后这类错误不可能再进产物。
+4. **`.Trash-0/` 会被 `git add -A` 误收**：沙箱的 `rm` 走安全删除，把被删文件移进仓库根的 `.Trash-0/`。
+   已在 `.gitignore` 中屏蔽（含 `.mutant/`，比对自检用的产物副本目录）。
+
 
 M5 特别说明：`location: "settings"` **至多一个**视图，它替换插件的默认设置页签；`desktop` 入口会拉高到
 **完全风险**等级并需要 `desktop` 权限 —— **不要**为了界面顺手引入，可移植视图（`main` + `flux.ui.h`）
