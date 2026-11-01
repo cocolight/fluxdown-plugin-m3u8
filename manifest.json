@@ -1,8 +1,8 @@
 {
   "identity": "m3u8-resolver@cocolight",
   "name": "M3U8 发现与变体解析器",
-  "version": "2.1.0",
-  "minAppVersion": "0.5.8",
+  "version": "2.2.0",
+  "minAppVersion": "0.6.0",
   "description": "把播放页或 .m3u8 链接解析成可下载的 HLS 播放列表：自动选清晰度、补齐防盗链请求头，支持剧集批量、登录站点、订阅追更与反爬站处理；页面只提供 DASH 清单（.mpd）时也能自动发现并交给核心下载。",
   "homepage": "https://github.com/cocolight/fluxdown-plugin-m3u8",
   "permissions": ["ffmpeg", "ytdlp", "auth", "intercept"],
@@ -213,6 +213,16 @@
       "description": "直链是一次性的或带防盗链时打开，避免探测把链接用掉；恢复下载时会重新解析。",
       "type": "boolean",
       "default": "false"
+    },
+    {
+      "key": "rangeCapKb",
+      "title": "单个 Range 请求上限（KiB，0 = 不限制）",
+      "description": "有些网盘 CDN 对单次请求的体积敏感：一个请求要超过约 5 MiB 就直接 403。填 4096 这类值可把每个请求切成小窗口，在不牺牲多线程的前提下拿到文件。需要 FluxDown 0.6.0 及以上；留 0 表示不干预，小于 64 的值按关闭处理。",
+      "type": "number",
+      "widget": "number",
+      "default": "0",
+      "min": 0,
+      "max": 65536
     },
     {
       "key": "useYtdlp",

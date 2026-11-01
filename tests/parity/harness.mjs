@@ -60,7 +60,13 @@ export function createFlux(sc) {
     },
     info: { identity: "m3u8-resolver@cocolight", version: "1.8.0", appVersion: "0.6.5" },
     logger: { info: record("info"), warn: record("warn"), error: record("error") },
-    task: { requestRetry: () => undefined, recordArtifact: async (n) => calls.push(["task.recordArtifact", n]) },
+    task: {
+      requestRetry: () => undefined,
+      recordArtifact: async (n) => {
+        calls.push(["task.recordArtifact", n]);
+        if (sc.artifactError) throw new Error(sc.artifactError);
+      },
+    },
     fetch: async (opts) => {
       calls.push(["fetch", opts.url, canon(opts.headers || {}), opts.method || "GET"]);
       const route = routes[opts.url];
@@ -99,6 +105,24 @@ export function createFlux(sc) {
           stderr: sc.ffmpeg.stderr ?? "",
           timedOut: false,
           truncatedStdout: false,
+          truncatedStderr: false,
+        };
+      },
+    };
+
+    // 真实宿主里 ffprobe 与 ffmpeg 同权限、同牢笼、同装同卸。`sc.ffprobe` 未给时表现为
+    // 「ffprobe 缺失」—— 插件必须退回扩展名判断，与安装前 ffmpeg 组件不齐的机器一致。
+    flux.ffprobe = {
+      run: async (spec) => {
+        calls.push(["ffprobe.run", spec.args]);
+        if (sc.ffprobe === undefined) throw new Error("ffprobe 未安装或不可用（随 ffmpeg 组件一并安装）");
+        const r = typeof sc.ffprobe === "function" ? sc.ffprobe(spec) : sc.ffprobe;
+        return {
+          code: r.code ?? 0,
+          stdout: r.stdout ?? "",
+          stderr: r.stderr ?? "",
+          timedOut: false,
+          truncatedStdout: !!r.truncatedStdout,
           truncatedStderr: false,
         };
       },

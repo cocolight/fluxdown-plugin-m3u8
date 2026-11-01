@@ -34,6 +34,7 @@ export interface Settings {
   htmlFallbackYtdlp: boolean;
   remuxToMp4: boolean;
   fixMuxFallback: boolean;
+  rangeCapKb: number;
 }
 
 function raw(key: string): string | number | boolean | null | undefined {
@@ -88,5 +89,6 @@ export function readSettings(): Settings {
     htmlFallbackYtdlp: bool("htmlFallbackYtdlp", true),
     remuxToMp4: bool("remuxToMp4", true),
     fixMuxFallback: bool("fixMuxFallback", true),
+    rangeCapKb: int("rangeCapKb", 0),
   };
 }

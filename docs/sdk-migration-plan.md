@@ -379,7 +379,7 @@ globalThis.resolve = resolve;   // 等价于 defineResolver(resolve)，但产物
 | **M1 工程化** | 建 SDK 项目骨架、拆 `lib/*`、`manifest.json` 移到根、`npm run build` + `validate` 通过；四个入口行为等价 | 同一批 URL（直链 m3u8 / media playlist / 播放页 / 剧集页 / mpd / 需登录站）下载结果与 1.8.0 逐字一致；`dist` 目录可被"从目录安装"加载 | **已完成**（见 8.1） |
 | **M2 请求面** | resolver 返回 `request` 补丁，删除 `authHeadersAsync` / `b64encode` | 防盗链站仍能下（Referer/Origin/UA）；登录站凭据生效且**不发给 CDN 主机**；一次性链接不被探测消耗 | **已完成**（见 8.3） |
 | **M3 拦截器** | 新增 `intercept.ts` + `adRules*` 设置；`segments` 只做 HLS；默认 `off` | 带 CUE-OUT 的测试流丢弃后产物可播、时长正确；`off` 时输出与 M2 完全一致；200 集剧集不触发熔断 | **已完成**（2.1.0） |
-| **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；（实测通过后）`finalize.replaceWith` | 删除任务时产物一并删除；不再出现孤立 `.ts`；`maxRangeBytes` 站点可多线程 | 待开始 |
+| **M4 后处理** | `recordArtifact` 登记 remux 产物；`ffprobe` 预判容器；`rangeCapKb` → `maxRangeBytes`；`finalize.replaceWith` **本轮不做**（见 8.5） | 删除任务时产物一并删除；已是 MP4 家族的文件不再整份复制；探测不可用时行为与 v1.8.0 逐字一致 | 已完成（2.2.0） |
 | **M5 界面（可选）** | `main` + `contributes.views`：`settings` 位置做一个"去广告规则编辑 + 站点预设"页签 | 视图在桌面与 Web 均可渲染；不声明 `desktop` 因而不引入"完全风险" | 待定 |
 
 M5 特别说明：`location: "settings"` **至多一个**视图，它替换插件的默认设置页签；`desktop` 入口会拉高到
@@ -512,6 +512,60 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
    不是同一个值的话归属判定全线失效（表现：去广告永远不生效，但下载不受影响）。
 3. 丢弃分片后引擎的**续传**行为：文档说会干净重来，需要确认不会留下半截旧分片导致产物时长错乱。
 
+### 8.5 M4 落地结果（2026-11-01，版本 2.2.0）
+
+**结构**：新增 `src/lib/probe.ts`（ffprobe 调用 + JSON 解析 + 容器家族判定，均为可单测的纯函数）；
+`src/entry/hooks.ts` 改为「按需探测一次 → 用结论决定合并/转封装 → 成功后登记产物」。
+新增设置 `rangeCapKb`（共 27 项，默认 `0` = 不干预），由 `requestPatch()` 换算成 `RequestPatch.maxRangeBytes`。
+
+**做了什么**
+
+| 项 | 改动 |
+| --- | --- |
+| 产物登记 | 合并/转封装成功后调 `flux.task.recordArtifact(裸文件名)`；失败只记 warn，不让钩子失败 |
+| 容器探测 | `ffprobe -v error -print_format json -show_format -show_streams ./file`，读 `format_name` 与轨道类型 |
+| 复用 | 一次 `onDone` 内只起一个 ffprobe 进程（合并失败后转封装时复用同一结论） |
+| 候选集 | 探测仍受 `INPUT_OK` 扩展名白名单门控 —— `.zip`/`.pdf` 一次进程都不起 |
+| Range 上限 | `rangeCapKb >= 64` 才下发 `maxRangeBytes`；小于 64 视为关闭（宿主硬性要求 ≥ 64 KiB） |
+
+**与方案原稿的偏离**
+
+1. **`finalize.replaceWith` 本轮不做，维持保守解释**。API 参考与拦截器指南对「`finalize` 里能否跑 ffmpeg」
+   仍然互相矛盾（§6.5）。M4 的收益（产物随任务删除、容器判断准确）不依赖它；贸然迁过去，一旦 `run` 被拒，
+   表现是「任务完成但文件不见了」—— 比孤儿文件严重得多。**保留在待实测 #2**，实测通过再单独做。
+
+2. **`.mp4` 的「轨对未合并」告警分支从死代码变活**。v1.8.0 的外层条件是 `INPUT_OK.test(video)`，
+   而白名单里**没有** `.mp4`，所以那个 `if (/\.mp4$/i.test(video))` 分支永远进不去 —— 轨对任务、视频又是 mp4 时
+   旧版是**完全静默**的。M4 重排条件后它按原意可达（多一条 warn），这也解释了 parity 里的第二处预期差异。
+
+3. **容器判定按「MP4 家族」而非「扩展名等于 mp4」**。ffprobe 对 `.mov` / `.mp4` / `.m4a` / `.3gp` 报的是
+   **同一个解复用器** `mov,mp4,m4a,3gp,3g2,mj2`，按字符串相等判断会把 `.mov` 误判成「需要转」。
+   实现按逗号拆开、命中家族名即跳过。
+
+4. **封面图不算视频轨**。mp3/m4a 的 `attached_pic` 在 ffprobe 里也是 `codec_type: "video"` 流；
+   不看 `disposition.attached_pic` 就会把纯音频文件当视频转封装，产出一个 mjpeg 单帧的假视频。
+
+**验收口径**：M4 改的是既有入口（hooks）的行为，因此**两层都要过**：
+
+- `parity`：67 个场景里 63 个逐字一致，**4 个用 `diverges` 声明为预期差异**（各自的理由写进 `scenarios.mjs` 注释）。
+  比对器新增「豁免过期」检查 —— 声明了差异但实际不再差异会报错，避免豁免沉淀成永久免检。
+- `postprocess.mjs`：31 项契约，覆盖登记时机/名字/失败容忍、五种探测失败形态的回退、容器家族判定、
+  封面图、探测次数与顺序、相对名参数、以及「关闭 remux 时不为关掉的功能起进程」。
+- `contract.mjs` 增 3 项：`rangeCapKb` 的 0 / 低于下限 / 正常换算。
+
+**变异自检**：把 `probe()` 恒返回 null → 9 项失败；删掉 remux 后的 `registerArtifact()` → 18 项失败。
+两个方向都证明断言不是空跑。
+
+**门槛**：`minAppVersion` `0.5.8` → **`0.6.0`**（`maxRangeBytes` 自 0.6.0 提供）。代价是 0.5.x 客户端会被跳过；
+但那批客户端已落后当前稳定版（0.6.5）三个小版本，且 `rangeCapKb` 默认关闭 ——
+不抬门槛的话，一旦用户配置了它，旧客户端遇到未知字段是**整次解析失败**，比「插件被跳过」更难诊断。
+
+**没有做的**（有意留在后续）
+
+- `resolvers[0].memoryLimitMb`（需 0.6.2）—— 剧集页扫描已有 500 条上限，不急。
+- `flux.fs` 写 `cookies.txt` 喂 yt-dlp —— 属于 yt-dlp 委派路径的体验优化，与 M4 主题无关。
+- `finalize` / `failed` 拦截阶段 —— 前者见上，后者（自动重试）需要先确认重试与去广告的交互。
+
 ---
 
 ## 九、待实测验证清单（装机必做，按优先级）
@@ -532,6 +586,10 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
 | 12 | `segments` 阶段的 `ctx.task.id` 与 `resolve` 的 `ctx.taskId` 是否同值 | 归属判定的唯一依据；不同值 = 去广告永远不生效（不误伤，但功能哑火） | 两边各记一条 `flux.logger.info`，对比同一次下载 |
 | 13 | 丢弃分片后引擎的续传行为 | 文档说会干净重来；需确认不留半截旧分片导致时长错乱 | 下到 50% 后开启去广告重跑同一任务，比对产物时长 |
 | 14 | 真实流上 `interceptors` 的调用次数与耗时 | 熔断是「连续 3 次超时 → 插件整体禁用」，会连带停掉 resolver | 200 集批量任务下看审计日志 `intercept.segments` 条数与是否有超时 |
+| 15 | `recordArtifact` 的「主干前缀」规则实测 | 决定产物名能否任意命名（我们只用 `主干.mp4`，理论上稳；若实测更宽松，将来可给 remux 产物加后缀） | 造一个 `.ts` 任务，在 `onDone` 里登记 `主干.mp4` 与 `别的名字.mp4`，看后者是否被拒 |
+| 16 | `flux.ffprobe` 是否总与 `flux.ffmpeg` 同在 | 不同在时探测恒失败 → 退化为扩展名判断（不误伤，但 M4 的收益消失） | 装 ffmpeg 组件后 `flux.ffprobe` 是否为 undefined；再手工删掉 bin 目录里的 ffprobe 复看 |
+| 17 | `maxRangeBytes` 与 `ephemeral` / `totalBytes` 的组合 | 文档要求「已知 `totalBytes`」，未知大小时该设置是否被静默忽略 | 网盘 CDN 直链开 `ephemeral` + 填 `rangeCapKb`，看是否仍整段下载 |
+| 18 | 同一任务重复 `onDone`（暂停后恢复）是否重复登记 | 重复登记同名产物若报错会刷 warn；若幂等则无影响 | 下载中暂停→恢复两次，看日志有无「产物登记失败」 |
 
 ---
 

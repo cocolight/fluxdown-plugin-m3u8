@@ -669,6 +669,9 @@ export const scenarios = [
   // ======================= hooks =======================
   {
     name: "hooks：onDone 单文件 .ts → remux 为 mp4",
+    // M4：remux 前先用 ffprobe 判容器（本 fixture 未给 sc.ffprobe → 表现为 ffprobe 缺失，
+    // 退回扩展名判断），成功后 recordArtifact 登记产物。多 1 条日志 + 2 次宿主调用。
+    diverges: "M4 产物登记与容器探测",
     entry: "hooks",
     settings: { remuxToMp4: true },
     store: { handledTasks: '{"t1":1}' },
@@ -677,6 +680,9 @@ export const scenarios = [
   },
   {
     name: "hooks：onDone 轨对未合并（mp4 + 独立音频）→ 仅告警",
+    // M4：这条告警在 v1.8.0 里其实是死代码 —— 外层 `INPUT_OK` 不含 .mp4，分支永远进不去。
+    // 现在按原意可达：轨对未合并、视频又是 mp4，只能告警（多 1 条 warn，无新增调用）。
+    diverges: "M4 让 .mp4 的『已合并？』告警分支可达",
     entry: "hooks",
     settings: { fixMuxFallback: true, remuxToMp4: true },
     store: { handledTasks: '{"t1":1}' },
@@ -685,6 +691,8 @@ export const scenarios = [
   },
   {
     name: "hooks：onDone 轨对未合并（mkv + 独立音频）→ ffmpeg 兜底合并",
+    // M4：同第一条 —— 一次 ffprobe（被拒后回退）+ 一次 recordArtifact，多 1 条日志。
+    diverges: "M4 产物登记与容器探测",
     entry: "hooks",
     settings: { fixMuxFallback: true, remuxToMp4: true },
     store: { handledTasks: '{"t1":1}' },
@@ -693,6 +701,9 @@ export const scenarios = [
   },
   {
     name: "hooks：onDone 兜底合并失败（code≠0）→ 继续 remux 并记错误",
+    // M4：合并与转封装前各探一次容器（缓存后只调一次）。本 fixture 的 ffprobe 调用被拒，
+    // 日志与旧版逐条一致，只多一次宿主调用。
+    diverges: "M4 转封装前多一次容器探测",
     entry: "hooks",
     settings: { fixMuxFallback: true, remuxToMp4: true },
     store: { handledTasks: '{"t1":1}' },

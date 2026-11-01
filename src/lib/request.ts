@@ -157,6 +157,11 @@ export async function requestPatch(env: Env, targetUrl: string): Promise<Request
   }
 
   if (Object.keys(merged).length) patch.setHeaders = merged;
+
+  // 6) Range 上限（M4）：只在下限以上才发。宿主硬性要求 ≥ 64 KiB，低于此值整条补丁会被拒，
+  //    所以宁可不发 —— 0 表示关闭，其他过小的值也按关闭处理。
+  if (s.rangeCapKb >= 64) patch.maxRangeBytes = s.rangeCapKb * 1024;
+
   return Object.keys(patch).length ? patch : undefined;
 }
 

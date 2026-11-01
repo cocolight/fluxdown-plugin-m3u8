@@ -12,6 +12,7 @@
  *   6. 用户显式写的同名凭据头优先。
  *   7. **凭据不落库**：`flux.storage.set` 的载荷里不出现任何凭据片段。
  *   8. `ephemeral` / `rangeSupported` 照旧透传。
+ *   9. （M4）`maxRangeBytes` 只在合法区间下发：0 或低于 64 KiB 一律不发，避免整条补丁被宿主拒。
  *
  * 用法：npm run contract        （需先 npm run build）
  */
@@ -259,8 +260,24 @@ async function resolveOnce(sc) {
     p.originHeaders === undefined ? true : `出现了 ${show(p.originHeaders)}`);
 }
 
+// ---------------------------------------------------------------------------
+// 10. Range 上限（M4）：只在合法区间内下发，0 表示不干预
+// ---------------------------------------------------------------------------
+{
+  const off = await resolveOnce({ settings: { rangeCapKb: 0 }, invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)) });
+  check("Range 上限：0 表示不限制，补丁里不出现 maxRangeBytes", () =>
+    off.result.request.maxRangeBytes === undefined ? true : `出现了 ${show(off.result.request.maxRangeBytes)}`);
+
+  const tiny = await resolveOnce({ settings: { rangeCapKb: 32 }, invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)) });
+  check("Range 上限：低于宿主下限（64 KiB）时按关闭处理，避免整条补丁被拒", () =>
+    tiny.result.request.maxRangeBytes === undefined ? true : `出现了 ${show(tiny.result.request.maxRangeBytes)}`);
+
+  const on = await resolveOnce({ settings: { rangeCapKb: 4096 }, invoke: (e) => e.resolve(ctxOf(`${CDN}/hls/master.m3u8`)) });
+  check("Range 上限：4096 KiB 换算成 4194304 字节", () => eq(on.result.request.maxRangeBytes, 4194304));
+}
+
 console.log(`\n${pass}/${pass + fail} 项契约通过`);
 if (fail) {
-  console.error(`\n${fail} 项契约未通过 —— M2 的请求面行为不符合预期。`);
+  console.error(`\n${fail} 项契约未通过 —— 请求面行为不符合预期。`);
   process.exit(1);
 }

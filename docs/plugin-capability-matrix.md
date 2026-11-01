@@ -106,6 +106,7 @@
 ## 4. 硬限制（接口不存在，别再尝试）
 
 - **字幕（WebVTT）**：`resolve()` 返回字段**穷举**为 `url` / `audioUrl` / `fileName` / `totalBytes` / `extraHeaders` / `request` / `ephemeral` / `rangeSupported` / `variants` / `defaultVariantIndex` / `manifest` —— **没有字幕字段**；且 `flux.fs` 与 ffmpeg 沙箱是两个独立工作区，抓到的字幕文件送不进去。插件**只能识别并记录**字幕轨，无法下载 / 封装 / 烧录。
+  即便有了 `recordArtifact`（v2.2.0），它也只登记**已存在**于保存目录里的文件，且文件名必须以任务主文件主干开头 —— 插件没有把任意文件写进保存目录的能力（ffmpeg 牢笼只能以相对名操作该目录）。
 - **插件不能创建任务**：`flux.task` 只有 `requestRetry`（且仅在 `onError` 有效），无分组 CRUD、无任务查询。**但引擎会据插件输出代为建任务** —— 清单（`manifest`）→ 裂变建组，订阅条目 → 建任务。插件自身始终不建任务。
 - **`onMetaProbed` 永不触发**：带 resolver 的插件该钩子不生效（官方明确），故 manifest 不订阅它。`onStart` 亦未订阅（仅日志、徒增噪音）。
 - **`hooks.match` 只按任务原始 URL 过滤**：播放页 URL 不含 `m3u8` ⇒ 会漏掉所有钩子，故插件改用 `taskId` 存储标记来判断「是不是本插件经手的任务」。
@@ -137,6 +138,7 @@
 | 1.8.0 | DASH 发现层（页面抠 `.mpd` + 直链 `.mpd` 放行） | **无新增引擎字段**（仅正则 + `flux.fetch` + 设置项） | `0.4.8`（不可回落） |
 | 2.0.0 | 构建工程化（TypeScript + SDK）；下载请求头改由 `ResolveResult.request` 补丁下发，凭据走 `originHeaders` 白名单 | `ResolveResult.request`（`RequestPatch`，与 `prepare` 阶段同形，引擎 **v0.5.8** 起） | **`0.5.8`**（不可回落） |
 | 2.1.0 | 分片级去广告（`interceptors.segments`，默认关）；新增 `intercept` 权限 | `interceptors` 拦截平面 + `SegmentItem`（引擎 **v0.5.8** 起） | `0.5.8`（不变） |
+| 2.2.0 | remux 产物登记（`recordArtifact`，删任务时一并删）、ffprobe 判容器、`rangeCapKb` | `flux.task.recordArtifact` + `flux.ffprobe`（随 `ffmpeg` 权限）；`RequestPatch.maxRangeBytes`（引擎 **v0.6.0** 起） | **`0.6.0`**（`maxRangeBytes` 为抬门槛原因） |
 
 ★ **`minAppVersion` 救不了旧版**：manifest 为 `deny_unknown_fields` —— 旧版 FluxDown 见到 `multi` / `subscriptions` / `auth` 会**拒绝整份 manifest**（表现为插件被跳过，而非忽略该字段）。`minAppVersion` 是在 **serde 解析成功之后**才检查的，此时旧版早已解析失败。因此：
 
