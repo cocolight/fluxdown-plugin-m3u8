@@ -9,7 +9,7 @@
 |------|------|
 | `manifest.json` | 插件清单源文件：`identity`、权限、设置项、入口与视图的声明。构建时原样拷入 `dist/` |
 | `fluxdown-plugin.config.json` | 入口映射：`dist/*.js` → `src/entry/*.ts` |
-| `src/entry/` | 六个入口：五个无状态入口各对应一次性的 QuickJS 上下文，`main.ts` 对应一个常驻上下文 |
+| `src/entry/` | 六个入口：五个无状态入口各对应一次性的 QuickJS 上下文，`main.tsx` 对应一个常驻上下文 |
 | `src/lib/` | 入口共享的纯函数模块，构建期打包进各入口 |
 | `src/types.ts` | 内部共享类型，补 SDK 未声明的宿主字段 |
 | `tests/legacy/` | v1.8.0 的四个 `.js` 原文件，冻结基线，不参与构建 |
@@ -20,15 +20,15 @@
 | `.agents/` | 工程协作文档，AI 与人共读 |
 | `scripts/` | 辅助脚本，含 `check-fast.sh` 快速门禁 |
 
-入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`auth.ts`（登录凭据规范化）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）、`main.ts`（常驻：注册设置页签「去广告规则」视图）。
+入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`auth.ts`（登录凭据规范化）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）、`main.tsx`（常驻：注册设置页签「去广告规则」视图，JSX 渲染）。
 
-`main.ts` 与其余五个不同类：它被引擎**求值一次**，注册发生在求值过程中，因此可以在文件顶层取用全局 `flux`；其余五个每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
+`main.tsx` 与其余五个不同类：它被引擎**求值一次**，注册发生在求值过程中，因此可以在文件顶层取用全局 `flux`；其余五个每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
 
 ## 2. 分层与依赖方向
 
 - 依赖方向单向：`src/entry/*` → `src/lib/*` → 无。`lib` 之间允许互相引用，但**不得成环**。
 - `lib` 内部分两类：纯函数（`url` / `hls` / `adrules` / `naming` / `text` / `patterns` / `probe` 的解析部分）与宿主调用（`http` / `request` / `install` / `handled` / `items`）。纯函数不得直接调 `flux.*`，宿主调用才碰。
-- **运行时六个入口彼此独立**：各自编译成一个 `.js`，同一模块会在多个产物里各存一份。`main.ts` 用到的 `adrules` / `rulecheck` / `adpresets` 与拦截器产物各存一份，靠 tree-shaking 保证只带进真正用到的部分。源码侧正常 `import` 即可，不要为「省体积」写跨入口的运行时依赖 —— 那在 QuickJS 里不存在。
+- **运行时六个入口彼此独立**：各自编译成一个 `.js`，同一模块会在多个产物里各存一份。`main.tsx` 用到的 `adrules` / `rulecheck` / `adpresets` 与拦截器产物各存一份，另额外内联 SDK 的 JSX 运行时（约 1.6 KB，授权见 `../THIRD-PARTY.md`）；靠 tree-shaking 保证只带进真正用到的部分。源码侧正常 `import` 即可，不要为「省体积」写跨入口的运行时依赖 —— 那在 QuickJS 里不存在。
 - 沙箱没有 `DOM`、`URL`、`setTimeout`、`fetch`。`tsconfig.json` 的 `lib` 不含 `DOM` 是**门禁**而非习惯：`new URL` / `btoa` 在编译期即失败，网络请求只走 `flux.fetch`。
 
 ## 3. 错误处理
@@ -48,7 +48,7 @@
 
 - 运行时零 npm 依赖：产物是 QuickJS 脚本，没有 `node_modules` 解析。新增能力优先手写或走宿主 API。
 - 构建期依赖（`typescript`、`fluxdown-plugin-sdk`）登记在 `package.json` 的 `devDependencies`，并在 `../THIRD-PARTY.md` 登记许可证。
-- **SDK 只允许 `import type`**：SDK 是 AGPL-3.0-or-later，本项目 MIT。产物中出现任何 SDK 运行时符号即破坏授权链，见 ADR-0003。
+- **SDK 运行时只允许一处**：`main.tsx` 的 JSX 运行时（`sdk/ui/jsx-runtime`）随 `dist/main.js` 分发，AGPL 义务登记在 `../THIRD-PARTY.md`，见 ADR-0005。其余 SDK 导出——类型与 `defineMain` 之类的辅助——一律 `import type` 或不用，不得扩大这处例外。
 
 ## 6. 密钥管理
 

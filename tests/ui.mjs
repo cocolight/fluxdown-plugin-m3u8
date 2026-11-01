@@ -578,6 +578,17 @@ const updates = (r) => r.liveCalls.filter((c) => c[0] === "settings.update");
     const regs = v.liveCalls.filter((c) => c[0] === "ui.view");
     return regs.length === 1 ? true : `ui.view 调用了 ${regs.length} 次`;
   });
+
+  // ADR-0005 的红线：SDK 运行时只允许出现在 main.js。这条断言守的是「例外不得扩大」——
+  // 有人给别的入口写了 JSX，jsx-runtime 就会被内联进那个产物，AGPL 面积随之变大。
+  await ck("例外边界：jsx 运行时只在 main.js，其他入口零 SDK 运行时", async () => {
+    const marker = "#fragment";
+    const mainSrc = readFileSync(join(DIST, "main.js"), "utf8");
+    if (!mainSrc.includes(marker)) return "main.js 里找不到 jsx 运行时，视图会在运行时崩";
+    const others = ["resolver.js", "hooks.js", "auth.js", "subscribe.js", "intercept.js"];
+    const leaked = others.filter((f) => readFileSync(join(DIST, f), "utf8").includes(marker));
+    return leaked.length === 0 ? true : `${leaked.join(", ")} 也内联了 jsx 运行时（ADR-0005 的例外不得扩大）`;
+  });
 }
 
 console.log(`\n${pass}/${pass + fail} 项视图契约通过`);

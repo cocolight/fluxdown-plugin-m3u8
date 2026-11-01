@@ -10,22 +10,15 @@
  *   2. **预设档位** —— 把「从保守到激进」的四种规则形态做成按钮，省得手抄 JSON。
  *
  * 三条实现纪律：
- *   - **不用 JSX**：SDK 的 `ui/jsx-runtime` 是运行时代码，打包进 `dist/` 就是 AGPL 代码进了
- *     MIT 项目（见 `.agents/adr/0003-sdk-type-only-import.md`）。这里用引擎自带的 `flux.ui.h`，
- *     kind→props 的类型关联由本地 `H` 类型补上，写错标签或属性仍然编译期报错。
+ *   - **JSX 用 SDK 的 `ui/jsx-runtime`**：该运行时会被 esbuild 内联进 `dist/main.js`，属
+ *     AGPL-3.0-or-later 代码随产物分发。这是**有意为之**，不是疏忽：授权义务登记在
+ *     `THIRD-PARTY.md`，决策与代价见 `.agents/adr/0005-allow-sdk-jsx-runtime.md`。
  *   - **规则解析与拦截器同源**：一律走 `lib/adrules.ts`，不在视图里另写一套判定，否则会出现
  *     「设置页说能生效、实际没生效」。
  *   - **不改基础设置页签的值**：只有用户按「保存」才写库，其他时候一律是草稿。
  */
 
-import type {
-  MainFlux,
-  Tone,
-  ViewChild,
-  ViewEvent,
-  ViewIntrinsicElements,
-  ViewNode,
-} from "fluxdown-plugin-sdk";
+import type { MainFlux, Tone, ViewEvent } from "fluxdown-plugin-sdk";
 import { AD_PRESETS, findPreset } from "../lib/adpresets";
 import { checkAdRules, summarizeRuleCount } from "../lib/rulecheck";
 
@@ -38,17 +31,6 @@ const MODE_OPTIONS = [
   { value: "marker", label: "仅按广告标记（保守）" },
   { value: "heuristic", label: "标记 + 推测（激进）" },
 ];
-
-/**
- * `flux.ui.h` 的实参签名是 `(kind: string, props?: Record<string, unknown>, ...children)`，
- * 编译期不知道哪个标签该配哪些属性。这个类型把 `ViewIntrinsicElements` 的映射补回去 ——
- * 纯类型断言，运行时零开销。
- */
-type H = <K extends keyof ViewIntrinsicElements>(
-  kind: K,
-  props: ViewIntrinsicElements[K],
-  ...children: ViewChild[]
-) => ViewNode;
 
 interface Notice {
   tone: Tone;
@@ -91,12 +73,10 @@ function keyOf(ev: ViewEvent): string {
  *
  * 为什么不像四个无状态入口那样用 `install()`：`main` 不需要挂全局函数名，它是被引擎
  * **求值一次**的常驻脚本，注册发生在求值过程中（等价于 SDK 的 `defineMain`，但省掉那层
- * 运行时依赖）。不导出：本文件在顶层就完成注册，import 它就等于要求有个 `flux` 在场，
+ * 入口包装）。不导出：本文件在顶层就完成注册，import 它就等于要求有个 `flux` 在场，
  * 单测一律通过 vm 跑 `dist/main.js`。
  */
 function register(flux: MainFlux): void {
-  const h = flux.ui.h as unknown as H;
-
   function readCurrent(): { mode: string; extra: string } {
     const s = flux.settings;
     return { mode: normMode(s.adRulesMode), extra: str(s.adRulesExtra) };
@@ -129,106 +109,95 @@ function register(flux: MainFlux): void {
       return { mode: cur.mode, extra: cur.extra, savedMode: cur.mode, savedExtra: cur.extra, notice: null };
     },
 
-    render: (state: State): ViewNode => {
+    render: (state: State) => {
       const check = checkAdRules(state.mode, state.extra);
       const dirty = state.mode !== state.savedMode || state.extra !== state.savedExtra;
       const ruleCount = summarizeRuleCount(check);
       const modeLabel = (MODE_OPTIONS.filter((o) => o.value === state.mode)[0] || MODE_OPTIONS[0]).label;
 
-      return h(
-        "stack",
-        { gap: "md", padding: "md" },
-        h("heading", { text: "去广告规则", level: 2 }),
-        h("text", {
-          text: "去广告在下载开始前按播放列表丢弃广告分片，只对本插件解析出来的任务生效。这里改的是「怎么判广告」，与基础设置页签里的同一项设置等价。",
-          tone: "muted",
-          size: "sm",
-        }),
+      return (
+        <stack gap="md" padding="md">
+          <heading text="去广告规则" level={2} />
+          <text
+            text="去广告在下载开始前按播放列表丢弃广告分片，只对本插件解析出来的任务生效。这里改的是「怎么判广告」，与基础设置页签里的同一项设置等价。"
+            tone="muted"
+            size="sm"
+          />
 
-        h(
-          "section",
-          { key: "sec-mode", title: "① 模式" },
-          h("select", { key: "mode", options: MODE_OPTIONS, value: state.mode }),
-          h("kv", {
-            items: [
-              { key: "当前模式", value: modeLabel },
-              { key: "自定义规则", value: ruleCount },
-            ],
-          }),
-          state.mode === "off"
-            ? h("callout", {
-                key: "off-tip",
-                tone: "neutral",
-                text: "已关闭：下载时不丢弃任何分片，下面填的规则也不会生效。",
-              })
-            : null,
-        ),
+          <section key="sec-mode" title="① 模式">
+            <select key="mode" options={MODE_OPTIONS} value={state.mode} />
+            <kv
+              items={[
+                { key: "当前模式", value: modeLabel },
+                { key: "自定义规则", value: ruleCount },
+              ]}
+            />
+            {state.mode === "off" ? (
+              <callout
+                key="off-tip"
+                tone="neutral"
+                text="已关闭：下载时不丢弃任何分片，下面填的规则也不会生效。"
+              />
+            ) : null}
+          </section>
 
-        h(
-          "section",
-          {
-            key: "sec-presets",
-            title: "② 预设",
-            description: "点一下套用到下方草稿，仍需按「保存」才写库。档位越靠后丢得越多。",
-          },
-          ...AD_PRESETS.map((p) =>
-            h(
-              "stack",
-              { key: "preset-" + p.id, direction: "row", gap: "sm", align: "center" },
-              h("button", { key: "apply-" + p.id, text: p.label, variant: "outline" }),
-              h("text", { text: p.note, tone: "muted", size: "xs" }),
-            ),
-          ),
-        ),
+          <section
+            key="sec-presets"
+            title="② 预设"
+            description="点一下套用到下方草稿，仍需按「保存」才写库。档位越靠后丢得越多。"
+          >
+            {AD_PRESETS.map((p) => (
+              <stack key={"preset-" + p.id} direction="row" gap="sm" align="center">
+                <button key={"apply-" + p.id} text={p.label} variant="outline" />
+                <text text={p.note} tone="muted" size="xs" />
+              </stack>
+            ))}
+          </section>
 
-        h(
-          "section",
-          {
-            key: "sec-rules",
-            title: "③ 自定义规则（JSON）",
-            description:
-              "三个可选键：keepPath（白名单，命中即永不丢弃）、dropPath（黑名单，命中即丢）、dropHosts（广告分片主机名，精确相等才丢）。留空表示只用内置判定。",
-          },
-          h("textarea", {
-            key: "extra",
-            value: state.extra,
-            rows: 8,
-            placeholder: '{ "dropPath": ["/ads/"] }',
-          }),
-          check.blocked
-            ? h("callout", { key: "rule-error", tone: "danger", title: "这段规则不能保存", text: check.blocked })
-            : null,
-          !check.blocked && check.warning
-            ? h("callout", { key: "rule-warn", tone: "warning", title: "部分规则不会生效", text: check.warning })
-            : null,
-          !check.blocked && !check.warning && str(state.extra).trim()
-            ? h("callout", { key: "rule-ok", tone: "success", text: "规则解析通过：" + ruleCount })
-            : null,
-        ),
+          <section
+            key="sec-rules"
+            title="③ 自定义规则（JSON）"
+            description="三个可选键：keepPath（白名单，命中即永不丢弃）、dropPath（黑名单，命中即丢）、dropHosts（广告分片主机名，精确相等才丢）。留空表示只用内置判定。"
+          >
+            <textarea
+              key="extra"
+              value={state.extra}
+              rows={8}
+              placeholder={'{ "dropPath": ["/ads/"] }'}
+            />
+            {check.blocked ? (
+              <callout key="rule-error" tone="danger" title="这段规则不能保存" text={check.blocked} />
+            ) : null}
+            {!check.blocked && check.warning ? (
+              <callout key="rule-warn" tone="warning" title="部分规则不会生效" text={check.warning} />
+            ) : null}
+            {!check.blocked && !check.warning && str(state.extra).trim() ? (
+              <callout key="rule-ok" tone="success" text={"规则解析通过：" + ruleCount} />
+            ) : null}
+          </section>
 
-        h("divider", {}),
+          <divider />
 
-        h(
-          "stack",
-          { key: "actions", direction: "row", gap: "sm", align: "center" },
-          h("button", { key: "save", text: "保存", variant: "primary", disabled: !dirty }),
-          h("button", { key: "reset", text: "还原", disabled: !dirty }),
-          h("text", {
-            key: "dirty-hint",
-            text: dirty ? "有未保存的改动" : "与已保存的值一致",
-            tone: dirty ? "warning" : "muted",
-            size: "xs",
-          }),
-        ),
+          <stack key="actions" direction="row" gap="sm" align="center">
+            <button key="save" text="保存" variant="primary" disabled={!dirty} />
+            <button key="reset" text="还原" disabled={!dirty} />
+            <text
+              key="dirty-hint"
+              text={dirty ? "有未保存的改动" : "与已保存的值一致"}
+              tone={dirty ? "warning" : "muted"}
+              size="xs"
+            />
+          </stack>
 
-        state.notice
-          ? h("callout", {
-              key: "notice",
-              tone: state.notice.tone,
-              title: state.notice.tone === "success" ? "已保存" : "提示",
-              text: state.notice.text,
-            })
-          : null,
+          {state.notice ? (
+            <callout
+              key="notice"
+              tone={state.notice.tone}
+              title={state.notice.tone === "success" ? "已保存" : "提示"}
+              text={state.notice.text}
+            />
+          ) : null}
+        </stack>
       );
     },
 
@@ -275,5 +244,5 @@ function register(flux: MainFlux): void {
 }
 
 // 引擎在启动 `main` 时已注入全局 `flux`；安装时的编译检查不包含 `main`（按需编译），
-// 所以这里在顶层取用是安全的。等价于 `defineMain(setup)` 的两行实现。
+// 所以这里在顶层取用是安全的。等价于 `defineMain(setup)` 去掉那层包装。
 register(flux as unknown as MainFlux);

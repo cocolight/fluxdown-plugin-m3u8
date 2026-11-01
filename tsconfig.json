@@ -15,7 +15,12 @@
     "types": [],
     // ★ 只到 ES2022，不含 DOM —— QuickJS 沙箱里没有 URL / fetch / TextEncoder / setTimeout。
     //   这样任何 `new URL(...)`、`fetch(...)` 都会在编译期失败，而不是在装机后静默打挂解析。
-    "lib": ["ES2022"]
+    "lib": ["ES2022"],
+    // 视图用 JSX 写，`<stack>` 这类标签的类型来自 SDK 的 ViewIntrinsicElements。
+    // 这三行必须与 SDK 构建时写死的 esbuild 选项一致（`jsx: automatic` +
+    // `jsxImportSource: fluxdown-plugin-sdk/ui`），否则 tsc 通过而构建产物引用到别处。
+    "jsx": "react-jsx",
+    "jsxImportSource": "fluxdown-plugin-sdk/ui"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

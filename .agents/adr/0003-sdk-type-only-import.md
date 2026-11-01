@@ -1,6 +1,6 @@
 # SDK 仅以 `import type` 引用
 
-- 状态：已接受
+- 状态：已接受（部分被 [0005](0005-allow-sdk-jsx-runtime.md) 修订：JSX 运行时随产物分发，其余导出仍只用 `import type`）
 - 日期：2026-11-01
 - 决策者：fluxdown-plugin-m3u8 维护者
 
