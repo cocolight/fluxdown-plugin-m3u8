@@ -37,6 +37,7 @@
 - 使用者文档 `docs/configuration.md` 改名 `docs/settings.md`（理由：与 `.agents/configuration.md` 同名，跨目录引用会指错）
 - `.agents/sdk-migration.md` 更正 M5 说明：`settings` 视图是**新增**页签，不替换「基础设置」页签
 - `THIRD-PARTY.md` 新增「随产物分发的 AGPL 组件」一节，登记 `dist/main.js` 内联的 jsx-runtime 及义务边界
+- `.agents/configuration.md` 补 ruleset 的 `enforcement` 核对步骤与合并策略（squash），分支保护改按 ruleset 描述
 
 ### Fixed
 
