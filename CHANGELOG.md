@@ -18,6 +18,7 @@
 
 - 移除登录入口：删掉 `auth` 段与 `auth` 权限，产物入口由 6 个降为 5 个（理由：登录对话框按站点登录，与对所有站点生效的定位冲突，见 ADR-0006）
 - 删除 `src/entry/auth.ts`；`tests/parity` 中 13 条 `auth` 场景随功能删除，改由 `tests/contract` 断言「已移除」
+- 删除 `adfilter/` 目录：v1.4.3 停用的本地去广告清洗服务（Python，独立进程），manifest 无对应设置项、构建无对应入口、测试无引用，规则特征早已迁入 `lib/adrules.ts`
 
 ### Added
 

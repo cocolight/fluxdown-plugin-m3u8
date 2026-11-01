@@ -1,8 +1,8 @@
 /**
  * 分片级去广告规则 —— 纯函数，无 IO、无 fetch、无正则回溯风险面。
  *
- * 为什么要这个文件：v1.4.3 之前去广告靠 `adfilter/` 那个本地 Python 服务（把整条 playlist
- * 交给外部进程清洗）。插件系统 v0.5.8 开放 `interceptors.segments` 后，引擎会先把 playlist
+ * 为什么要这个文件：v1.4.3 之前去广告靠一个本地 Python 清洗服务（把整条 playlist 交给外部
+ * 进程处理；该服务目录已于 v3.0.0 从仓库删除，实现见 git 历史）。插件系统 v0.5.8 开放 `interceptors.segments` 后，引擎会先把 playlist
  * 解析成 `SegmentItem[]` 交给插件，插件只需返回要丢弃的 **id 列表** —— 不再需要外部进程、
  * 不需要自己绝对化分片地址、也不会因为服务没起就把下载搞挂。
  *
