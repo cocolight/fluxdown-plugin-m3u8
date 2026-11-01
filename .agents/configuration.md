@@ -90,11 +90,37 @@ git update-index --chmod=+x scripts/check-fast.sh
 
 1. **启用 Actions**：Settings → Actions → General → Allow all actions and reusable workflows。
 2. **收紧权限**：同页 Workflow permissions 选 *Read repository contents*（与 workflow 里的 `permissions: contents: read` 一致）。
-3. **设置分支保护**：Settings → Branches → Add branch protection rule，分支名填 `master`，
-   - 勾选 *Require a pull request before merging*
-   - 勾选 *Require status checks to pass before merging*，搜索并勾选 **`test`**
+3. **设置分支保护**：Settings → Rules → Rulesets → New branch ruleset，目标填 `master`，
+   - 勾选 *Restrict deletions*、*Block force pushes*
+   - 勾选 *Require a pull request before merging*（`Required approvals` 填 0 —— 单人仓库没有第二个人能批）
+   - 勾选 *Require status checks to pass*，搜索并勾选 **`test`**，同时勾上 *Require branches to be up to date*
 
    ⚠️ required status checks 的名称必须与 workflow 中的 job 名称一致。`build.yml` 的 job id 是 `test` 且未设 `name`，因此在列表里显示为 `test`。若你改了 job 名，这里要同步改。
+
+   ⚠️ **建完必须核对 `enforcement` 是否为 `Active`**。ruleset 可能停在 `Disabled`：界面上规则、目标分支、
+   状态检查全都显示正常，但保护**完全没生效**，直到有人直推 `master` 成功才会暴露。核对命令：
+
+   ```bash
+   gh api repos/<owner>/<repo>/rulesets --jq '.[] | {id,name,enforcement}'
+   gh api repos/<owner>/<repo>/rules/branches/master --jq '[.[].type]'
+   ```
+
+   第二条应返回 `deletion` / `non_fast_forward` / `required_status_checks` / `pull_request`；
+   返回空数组即等于未保护。另注：`gh api .../branches/master/protection` 对 ruleset 恒返回 404，
+   那是经典保护 API，查不到 ruleset，404 不代表没保护。
+
+   用 ruleset 而非旧的 *Settings → Branches* 经典保护：经典保护无法表达 bypass 列表与多规则组合。
+   两者可以共存，但**不要同时配**同一分支 —— 两套规则各自生效，出问题时分不清拦在哪一层。
+
+### 合并策略
+
+一个功能一个 PR，合并一律 **squash**（`gh pr merge <n> --squash --delete-branch`）：
+
+- `master` 上一条提交 = 一个功能，回滚粒度与功能粒度一致；历史里不出现合并节点与半成品中间提交。
+- squash 后的提交信息取 PR 标题，口径与 `CHANGELOG.md` 条目一致；PR 正文不进入提交历史，
+  所以**取舍理由与验证数据要落在 ADR / `.agents/` / `CHANGELOG.md` 里**，不能只写在 PR 描述中。
+- 合并后本地 `git merge --ff-only origin/master`。不要用会造合并节点的 `git pull`：本地多出合并提交后，
+  再想推就得再开一个 PR 去合自己的合并提交。
 
 **runner 镜像**：`runs-on` 显式写成 `ubuntu-24.04`，而不是 `ubuntu-latest`。跟随 latest 会在 GitHub 切换镜像时让 CI 行为突变——系统依赖的包名可能变化，CI 会在你毫无改动的一天突然变红。
 
