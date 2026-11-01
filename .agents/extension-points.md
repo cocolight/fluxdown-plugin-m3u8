@@ -21,6 +21,17 @@
 5. 新入口是独立 QuickJS 上下文：不得在运行时引用其他入口的导出。
 6. `npm run build && npm run validate` 必须通过；产物数量变化时更新 README「文件结构」。
 
+## 加一个视图 / 设置页签
+
+1. `manifest.json` 的 `contributes.views` 加一项：`id` 匹配 `^[a-z][a-z0-9-]{0,31}$`，`title` 1–40 字符，`location` 取 `settings` / `activity` / `taskDetail` / `window` / `auth`。`settings` 与 `auth` **各至多一个**。
+2. 没有 `desktop` 字段的视图恒为可移植视图，要求声明 `main`；Web 端只显示这类视图。**不要**为了界面顺手加 `desktop` —— 那会把风险等级拉到「完全」并要求 `desktop` 权限。
+3. `src/entry/main.ts` 用 `flux.ui.view(id, { init, render, event })` 注册，`id` 必须与声明完全一致（漏了客户端会报 `view not registered`）。
+4. 用 `flux.ui.h` 构造节点，**不引入 JSX**（理由见 ADR-0004）。`h` 的 kind→props 关联靠本文件里的 `type H` 补，写错标签仍是编译错误。
+5. 受控输入必须把 `change` 的值写回 `state`，否则输入框会弹回。事件按节点 id 的**最后一段**分发，并为每个可交互节点、每个条件出现的节点加 `key`（同级不得重名）。
+6. `location: "settings"` 是**新增**一个「插件设置」页签，与自动生成的「基础设置」页签并存 —— 不需要复刻已有设置项，只做基础表单做不到的事。
+7. `tests/ui.mjs` 补断言：声明与注册一致、渲染树通过 schema 校验、受控输入、保存语义。新增 `kind` 时同步该文件的 `KINDS` 白名单与 `STRING_PROPS`。
+8. 视图里不做网络请求与长循环：`main` 的所有视图、命令、事件共用一个虚拟机且**串行执行**，单次调用上限 30 秒墙钟 / 2 秒 CPU / 64 MB。
+
 ## 加一个拦截阶段
 
 1. `manifest.json` 的 `interceptors.stages` 追加阶段名（当前只有 `segments`）。

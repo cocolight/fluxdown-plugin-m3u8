@@ -85,7 +85,34 @@ if [ -f manifest.json ] && [ -f package.json ]; then
   fi
 fi
 
-# 6. 代码文件卫生：行尾空白与未解决的冲突标记。
+# 6. manifest 声明的每个入口都要有构建映射。
+#    漏一条的后果不是「构建警告」而是「装不上」—— 客户端要求 manifest 点名的文件都在包里，
+#    缺一个就是「必须存在的文件缺失」。加 main 入口时最容易忘的就是这个文件。
+if [ -f manifest.json ] && [ -f fluxdown-plugin.config.json ] && command -v node >/dev/null 2>&1; then
+  missing=$(node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+const entries = JSON.parse(fs.readFileSync("fluxdown-plugin.config.json", "utf8")).entries || {};
+const need = [];
+const add = (p) => { if (typeof p === "string" && p && need.indexOf(p) < 0) need.push(p); };
+if (m.main) add(m.main.entry);
+if (m.hooks) add(m.hooks.entry);
+if (m.auth) add(m.auth.entry);
+if (m.interceptors) add(m.interceptors.entry);
+(m.resolvers || []).forEach((r) => add(r.entry));
+(m.subscriptions || []).forEach((s) => add(s.entry));
+const missing = need.filter((n) => !Object.prototype.hasOwnProperty.call(entries, n) && !fs.existsSync(n));
+if (missing.length) console.log(missing.join("\n"));
+' 2>/dev/null) || missing=""
+  if [ -z "$missing" ]; then
+    ok "manifest 入口均有构建映射"
+  else
+    bad "这些入口没有构建映射（dist/ 里不会出现，安装会报缺文件）：
+$missing"
+  fi
+fi
+
+# 7. 代码文件卫生：行尾空白与未解决的冲突标记。
 #    CI 的 checkout 是干净的，`git diff --check` 在 CI 里必然空转，所以改为扫描已跟踪文件。
 #    Markdown 不查行尾空白（两空格是合法的硬换行）。
 if git rev-parse --git-dir >/dev/null 2>&1; then

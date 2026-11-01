@@ -16,3 +16,4 @@
 | [0001](0001-record-architecture-decisions.md) | 采用 ADR 记录架构决策 | 已接受 |
 | [0002](0002-migrate-to-typescript-and-plugin-sdk.md) | 源码迁移到 TypeScript + 插件 SDK 构建链 | 已接受 |
 | [0003](0003-sdk-type-only-import.md) | SDK 仅以 `import type` 引用 | 已接受 |
+| [0004](0004-no-sdk-jsx-runtime.md) | 视图层不用 SDK 的 JSX 运行时，改用 `flux.ui.h` | 已接受 |

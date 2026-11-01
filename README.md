@@ -21,6 +21,7 @@
 - **相对地址修正（v1.4.1）**：插件沙箱是 QuickJS，**没有 `URL` 全局对象**；改用自实现的纯字符串解析（`parseUrl`/`absUrl`），并在返回前用 `assertOutputUrl` 兜底校验，出错时给可读提示而非引擎的隐晦报错。
 - **智能命名（v1.4.0）**：文件名按「页面标题 → 上层 ID 目录 → 文件名」决策链推导，**剔除 `index`/`playlist`/`master` 这类无信息量的基础名**；默认模板 `{title} {host}`，可自定义。
 - **分片级去广告（v2.1.0）**：下载前按播放列表里的广告标记丢弃广告分片（`interceptors.segments` 阶段），**默认关闭**。两档强度：只认 `CUE-OUT`/`CUE-IN` 与 `DATERANGE` 标注（保守），或叠加「极短分片 / 广告命名」推测（激进）。三条纪律内置：标记必须成对、不跨密钥与初始化段边界、不丢空也不丢超过八成。只对本插件解析出来的任务生效。
+- **去广告规则编辑页（v2.3.0）**：插件设置里多一个「去广告规则」页签（在「基础设置」旁边，不取代它）。里面能切模式、套用五档预设、手改自定义规则 JSON，并**当场**告诉你哪条规则写错了、哪条不会生效 —— 不必等到下次下载翻日志。
 - **下载后处理（可选，默认开）**：核心 remux 失败、或产物来自非 HLS 任务时用 ffmpeg 无损补转一次；核心未合并轨对时用 `-c copy` 补做合并。v2.2.0 起先用 ffprobe 读**真实容器**再决定转不转（扩展名会骗人：fMP4 合并出来常叫 `.ts`，容器其实已是 MP4），并把转出的产物**登记为任务的衍生产物** —— 删任务时一并删除，不再留孤儿文件。
 - **小 Range 兼容（v2.2.0）**：对「单次请求超过几 MB 就 403」的网盘 CDN，可给下载请求设 Range 上限，在不牺牲多线程的前提下拿到文件（`maxRangeBytes`，需 FluxDown ≥ 0.6.0，默认不启用）。
 - **失败可观测**：`onError` 记录本插件任务的失败原因。
@@ -37,7 +38,7 @@
 ### 方式二：从构建产物目录安装（开发模式）
 
 1. `git clone` 本仓库并构建（见下节「开发」）：`npm ci && npm run build`。
-2. FluxDown → **设置 → 扩展 → 插件 → 从目录安装**，选择 **`dist/` 目录**（构建产物，含 `manifest.json` 与五个入口脚本）。
+2. FluxDown → **设置 → 扩展 → 插件 → 从目录安装**，选择 **`dist/` 目录**（构建产物，含 `manifest.json` 与六个入口脚本）。
 3. 改 `src/**/*.ts` 后需重新 `npm run build` 才生效；改根目录 `manifest.json` 后在客户端**重载插件**才生效。
 
 > v1.8.0 及更早版本的源码目录 `src/` 即插件本体，可直接选择安装；自 TypeScript 迁移后插件本体是 `dist/`，`src/` 不再含 `manifest.json`。
@@ -129,7 +130,7 @@
 
 ```text
 .                                    # 仓库根（构建工程，非插件本体）
-├── manifest.json                    # 插件清单源文件（identity、权限、设置、五处入口指向）
+├── manifest.json                    # 插件清单源文件（identity、权限、设置、入口与视图声明）
 ├── fluxdown-plugin.config.json      # 构建配置：TS 入口 → 产物文件名映射
 ├── package.json / tsconfig.json     # 构建、测试与类型检查配置
 ├── AGENTS.md                        # AI 编码助手规则：路由表、常用命令、红线、DoD、事实源坐标
@@ -151,16 +152,19 @@
 ├── scripts/check-fast.sh            # 快速门禁：本地 pre-commit 与 CI 共用同一份断言
 ├── .githooks/pre-commit             # 提交前门禁（需 git config core.hooksPath .githooks）
 ├── src/                             # 源码（TypeScript，构建后打包进 dist/）
-│   ├── entry/                       # 五个插件入口，各自对应一个独立 QuickJS 上下文
+│   ├── entry/                       # 六个入口：五个无状态（每次调用全新上下文）+ main（常驻）
 │   │   ├── resolver.ts              # 解析入口：发现 master、选变体、音轨配对、鉴权/凭据注入、剧集清单、DASH 发现
 │   │   ├── hooks.ts                 # 钩子：onDone（容器探测 → 轨对合并兜底 / remux → 登记产物）、onError、onCancel（清标记）
 │   │   ├── auth.ts                  # 登录入口：globalThis.authenticate（凭据规范化 + 落库）
 │   │   ├── subscribe.ts             # 订阅 provider：globalThis.subscribe（列表页枚举 → feed）
-│   │   └── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
+│   │   ├── intercept.ts             # 拦截器：globalThis.intercept（segments 阶段去广告，默认关）
+│   │   └── main.ts                  # 常驻脚本：注册设置页签「去广告规则」视图（contributes.views）
 │   ├── lib/                         # 入口共享的纯函数模块（构建期打包，无需运行时 require）
 │   │   ├── url.ts settings.ts discovery.ts hls.ts http.ts request.ts adrules.ts probe.ts ...
+│   │   ├── rulecheck.ts             # 设置页的规则校验（与 adrules 同源，不另写判定）
+│   │   ├── adpresets.ts             # 设置页的五档规则预设（不内置站点名单）
 │   └── types.ts                     # 内部共享类型
-├── tests/                           # 四层测试，共用 tests/parity/harness.mjs 的假宿主
+├── tests/                           # 五层测试，共用 tests/parity/harness.mjs 的假宿主
 │   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（冻结，不参与构建）
 │   ├── parity.mjs                   # 行为比对器：同一批 fixture 分别喂给 legacy 与 dist
 │   ├── parity/scenarios.mjs         # 67 个 fixture（直链 / 播放页 / 剧集 / DASH / 鉴权 / 订阅 / 钩子）
@@ -168,18 +172,19 @@
 │   ├── parity/harness.mjs           # 假宿主（日志 / 宿主调用 / 返回值三路记录）
 │   ├── contract.mjs                 # 请求面契约：凭据只走 originHeaders、Basic 编码、rangeCap 区间
 │   ├── intercept.mjs                # 拦截器契约：成对丢弃、密钥边界、不丢空、归属判定
-│   └── postprocess.mjs              # 后处理契约：产物登记、容器探测、探测失败必须回退
+│   ├── postprocess.mjs              # 后处理契约：产物登记、容器探测、探测失败必须回退
+│   └── ui.mjs                       # 视图契约：树合法性、受控输入、保存语义、越界检查
 ├── dist/                            # ← 构建产物 = 插件本体（「从目录安装」指向此目录；不入库）
 ├── adfilter/                        # 早期本地去广告清洗服务（独立进程）—— 已归档，v2.1.0 起由拦截器取代
 ├── docs/settings.md                 # 使用者文档：27 个设置项的作用 / 配置 / 效果 / 示例
-├── .github/workflows/build.yml      # CI：门禁 + 类型检查 + 构建 + 校验 + 四层测试 + CHANGELOG/发版守卫
+├── .github/workflows/build.yml      # CI：门禁 + 类型检查 + 构建 + 校验 + 五层测试 + CHANGELOG/发版守卫
 ├── LICENSE
 └── README.md
 ```
 
 > **插件本体是构建产物 `dist/` 目录。** `manifest.json` 位于仓库根，构建时原样拷入 `dist/`；
-> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `auth.js` / `subscribe.js`）。
-> 构建后四个脚本仍是**彼此独立的 QuickJS 上下文**，运行时不能互相引用；
+> `entry` 使用 `dist/` 内的相对路径（`resolver.js` / `hooks.js` / `auth.js` / `subscribe.js` / `intercept.js` / `main.js`）。
+> 构建后这些脚本仍是**彼此独立的上下文**，运行时不能互相引用；
 > 源码侧可以正常 `import`，共享逻辑由构建期打包进各入口（代价是同一模块会在多个产物里各存一份）。
 
 ## 开发
@@ -189,13 +194,14 @@ npm ci              # 安装依赖（fluxdown-plugin-sdk + typescript）
 npm run typecheck   # 类型检查：tsc --noEmit
 npm run build       # 构建 → dist/（含 manifest.json 拷贝）
 npm run validate    # 校验 manifest 与产物是否符合插件规范（装机前跑）
-npm test            # 四层测试串联，等价于下面四条依次执行
+npm test            # 五层测试串联，等价于下面五条依次执行
 npm run parity      # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场景比对；有意改行为的场景用 diverges 声明
 npm run contract    # 请求面契约：凭据只走 originHeaders、Basic 的 UTF-8 编码、凭据不落库
 npm run intercept   # 拦截器契约：成对丢弃、不跨密钥边界、不丢空、只碰本插件任务
 npm run postprocess # 后处理契约：产物登记、ffprobe 判容器、探测失败退回扩展名判断
+npm run ui          # 视图契约：设置页签的树合法性、受控输入、保存语义、越界检查
 npm run pack        # 打包 .fxplug
-./scripts/check-fast.sh  # 结构门禁：文档路由表、AGENTS 行数、CHANGELOG 条目、版本号一致、空白与冲突标记
+./scripts/check-fast.sh  # 结构门禁：文档路由表、AGENTS 行数、CHANGELOG 条目、版本号一致、入口构建映射、空白与冲突标记
 ```
 
 - **改行为前先跑 `npm run parity`**：它是重构的安全网 —— 任何「以为等价、实际不等价」的改动都会落到具体场景与字段上。

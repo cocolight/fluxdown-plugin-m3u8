@@ -7,12 +7,20 @@
 > 在条目末尾用「（理由：…）」附**一句话**，多数条目不带理由；不写破折号插入语与推导叙事。
 > 小决策的留痕在此，重大决策走 `.agents/adr/`。
 >
-> 2.0.0 – 2.2.0 三节已完成并提交，尚未打 tag 发版，日期标「未发布」；发版时替换为实际日期。
+> 2.0.0 – 2.3.0 四节已完成并提交，尚未打 tag 发版，日期标「未发布」；发版时替换为实际日期。
 
 ## [Unreleased]
 
+## [2.3.0] - 未发布
+
 ### Added
 
+- 新增设置页签「去广告规则」（`main` + `contributes.views`）：模式切换、规则即时校验、五档预设
+- 新增 `src/lib/rulecheck.ts`：界面侧规则校验，与拦截器共用 `parseAdRuleSet`，不另写一套判定
+- 新增 `src/lib/adpresets.ts`：从保守到激进的五档规则形态，不内置任何站点域名名单
+- 新增 `tests/ui.mjs`：36 项视图契约（树合法性、受控输入、保存语义、越界检查）
+- `scripts/check-fast.sh` 新增第 6 条：manifest 声明的入口必须在构建配置里有映射
+- 新增 ADR-0004：视图层不用 SDK 的 `jsx-runtime`，改用引擎自带的 `flux.ui.h`
 - 新增 `AGENTS.md`、`.agents/` 工程文档、`ROADMAP.md`、`CONTRIBUTING.md`、`THIRD-PARTY.md`
 - 新增 `scripts/check-fast.sh` 快速门禁与 `.githooks/pre-commit`，本地与 CI 共用同一份断言
 - 新增 `.github/pull_request_template.md`
@@ -20,12 +28,14 @@
 
 ### Changed
 
+- 测试链路由四层扩为五层，`npm test` 增加 `ui`；`main` 视图的 schema 与交互从此有断言
 - CI 由 `ci.yml` 改为 `build.yml`，新增 CHANGELOG 门禁与发版守卫两个 job
 - 工程文档从 `docs/` 迁到 `.agents/`，`docs/` 只保留使用者文档（理由：两类读者不该共用一处）
 - `.agents/capability-matrix.md` 同步为现状：`METHOD=NONE` 标记为已修复、请求面改用 `request` 补丁
 - 发版守卫要求版本节带实际日期，`- 未发布` 占位不再通过（理由：占位与日期在旧正则下不可区分，等于放行）
 - `AGENTS.md` §9 同改矩阵的「设置键」一行改指 `manifest.json` + `settings.ts`，仓库配置单列一行
 - 使用者文档 `docs/configuration.md` 改名 `docs/settings.md`（理由：与 `.agents/configuration.md` 同名，跨目录引用会指错）
+- `.agents/sdk-migration.md` 更正 M5 说明：`settings` 视图是**新增**页签，不替换「基础设置」页签
 
 ### Fixed
 

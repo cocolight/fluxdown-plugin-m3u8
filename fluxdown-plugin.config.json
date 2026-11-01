@@ -4,6 +4,7 @@
     "hooks.js": "src/entry/hooks.ts",
     "auth.js": "src/entry/auth.ts",
     "subscribe.js": "src/entry/subscribe.ts",
-    "intercept.js": "src/entry/intercept.ts"
+    "intercept.js": "src/entry/intercept.ts",
+    "main.js": "src/entry/main.ts"
   }
 }

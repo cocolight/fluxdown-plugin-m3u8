@@ -64,7 +64,7 @@ git update-index --chmod=+x scripts/check-fast.sh
 | `manifest.json` | 插件清单源文件，构建时拷入 `dist/` |
 | `src/entry/` | 五个插件入口（resolver / hooks / auth / subscribe / intercept） |
 | `src/lib/` | 入口共享的纯函数模块 |
-| `tests/` | 四层测试，`tests/legacy/` 为冻结基线 |
+| `tests/` | 五层测试，`tests/legacy/` 为冻结基线 |
 | `docs/` | **只放使用者文档**：安装、使用、配置说明。工程文档不进这里 |
 | `.agents/` | 工程协作文档：架构 / 配置 / 完成定义 / 发版 / ADR / 扩展点，AI 与人共读 |
 | `.agents/skills/` | 可复用的 AI skill，按需自建（契约见 `skills/README.md`） |
@@ -82,7 +82,7 @@ git update-index --chmod=+x scripts/check-fast.sh
 
 | job id | 何时跑 | 作用 |
 |--------|--------|------|
-| `test` | push 到 `master`、`v*` tag、所有 PR | 快速门禁 + 类型检查 + 格式检查 + 构建 + manifest 校验 + 四层测试 |
+| `test` | push 到 `master`、`v*` tag、所有 PR | 快速门禁 + 类型检查 + 格式检查 + 构建 + manifest 校验 + 五层测试 |
 | `Changelog gate` | 仅 PR | `feat`/`fix` 改了代码却没更新 `CHANGELOG.md` 时拦下 |
 | `Release guard` | 仅 `v*` tag | 校验 `CHANGELOG.md` 有带**实际日期**的对应版本节（`未发布` 占位不通过）、`ROADMAP.md` 无 `in-progress` 行 |
 

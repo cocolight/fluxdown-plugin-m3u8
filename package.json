@@ -1,6 +1,6 @@
 {
   "name": "fluxdown-plugin-m3u8",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "FluxDown M3U8 发现与变体解析器（TypeScript + plugin SDK 构建）",
@@ -14,11 +14,12 @@
     "validate": "fluxdown-plugin validate",
     "pack": "fluxdown-plugin pack",
     "typecheck": "tsc --noEmit",
-    "test": "npm run parity && npm run contract && npm run intercept && npm run postprocess",
+    "test": "npm run parity && npm run contract && npm run intercept && npm run postprocess && npm run ui",
     "parity": "node tests/parity.mjs",
     "contract": "node tests/contract.mjs",
     "intercept": "node tests/intercept.mjs",
-    "postprocess": "node tests/postprocess.mjs"
+    "postprocess": "node tests/postprocess.mjs",
+    "ui": "node tests/ui.mjs"
   },
   "devDependencies": {
     "fluxdown-plugin-sdk": "^0.5.0",

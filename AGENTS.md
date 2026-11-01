@@ -40,7 +40,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 |------|------|
 | 安装依赖 | `npm ci` |
 | 运行（装机） | `npm run build`，然后在 FluxDown「设置 → 扩展 → 插件 → 从目录安装」选 `dist/` |
-| 测试 | `npm test`（parity + contract + intercept + postprocess 串联） |
+| 测试 | `npm test`（parity + contract + intercept + postprocess + ui 串联） |
 | Lint | `npm run typecheck`（`tsc --noEmit`，兼类型检查与静态检查） |
 | 格式化检查 | 无独立工具；行尾空白与冲突标记由 `./scripts/check-fast.sh` 断言（理由见 §4 第 11 条） |
 | 快速门禁（提交前与 CI 同跑，无需填写） | `./scripts/check-fast.sh` |
@@ -94,7 +94,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 详见 `.agents/definition-of-done.md`。任一功能完成须同时满足：
 
 - [ ] `ROADMAP.md` 该行「验收标准」全部满足
-- [ ] 新增 / 更新对应测试且符合测试质量基线（断言行为而非实现、测试名说清场景、拒绝空转断言、变异自检），四层测试全量通过
+- [ ] 新增 / 更新对应测试且符合测试质量基线（断言行为而非实现、测试名说清场景、拒绝空转断言、变异自检），五层测试全量通过
 - [ ] 类型检查与格式检查通过
 - [ ] 相关文档（README / AGENTS / architecture / ADR / CHANGELOG）同步更新
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 已记录本次改动
@@ -122,6 +122,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 | 外部接口契约 | `src/types.ts` + `fluxdown-plugin-sdk` 的类型定义（宿主侧字段以 SDK 为准，SDK 未声明的在 `types.ts` 补注） |
 | 数据结构与存储 | `src/lib/handled.ts`（任务标记）、`src/lib/items.ts`（剧集条目映射）、`src/lib/settings.ts`（设置读取与默认值） |
 | 关键算法或业务规则 | `src/lib/adrules.ts`（去广告三条纪律）、`src/lib/hls.ts`（变体与音轨解析）、`src/lib/discovery.ts`（master / mpd 发现）、`src/lib/naming.ts`（命名决策链） |
+| 设置页视图 / 界面节点 | `src/entry/main.ts`（`flux.ui.view` 注册与节点树）、`src/lib/rulecheck.ts`（界面侧规则校验，与 `adrules` 同源）、`src/lib/adpresets.ts`（预设档位） |
 | 版本号 | `manifest.json` 的 `version`（事实源）与 `package.json` 的 `version`，两者必须相等，由 `scripts/check-fast.sh` 断言 |
 | 插件系统版本门槛 | `.agents/sdk-migration.md` 的版本门槛表（哪个字段自哪个引擎版本提供） |
 | 第三方依赖许可证 | `THIRD-PARTY.md`（每引入一个直接依赖须登记：许可证 SPDX 标识、用途、是否随分发） |

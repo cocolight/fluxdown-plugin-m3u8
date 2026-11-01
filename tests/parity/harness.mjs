@@ -32,11 +32,32 @@ export const scrubTs = (v) =>
 // ---------------------------------------------------------------------------
 // 假宿主
 // ---------------------------------------------------------------------------
+
+/** 节点子节点展平：`null` / `false` / `undefined` 丢弃，数组递归展开（与引擎一致）。 */
+function flatten(children) {
+  const out = [];
+  const walk = (c) => {
+    if (Array.isArray(c)) {
+      for (const inner of c) walk(inner);
+    } else if (c !== null && c !== undefined && c !== false) {
+      out.push(c);
+    }
+  };
+  walk(children);
+  return out;
+}
+
 export function createFlux(sc) {
   const calls = [];
   const logs = [];
   const store = { ...(sc.store || {}) };
   const routes = sc.routes || {};
+  /** `main` 脚本注册的视图定义：id → definition。非 main 场景恒为空对象。 */
+  const views = {};
+  /** main 注册的命令 / rpc / 事件处理器，供 ui 测试直接调用。 */
+  const commands = {};
+  const rpcHandlers = {};
+  const eventHandlers = {};
 
   const record = (level) => (...args) => logs.push([level, ...args.map((a) => (typeof a === "string" ? a : canon(a)))]);
 
@@ -147,7 +168,79 @@ export function createFlux(sc) {
     };
   }
 
-  return { flux, calls, logs };
+  // ---------------------------------------------------------------------
+  // 常驻 main 上下文专属接口
+  //
+  // 只在 `sc.main` 为真时注入：parity / contract / intercept / postprocess 跑的都是无状态入口，
+  // 多给它们 ui/timers 只会让「假宿主和真宿主」的差异面变大，反而降低比对的可信度。
+  // ---------------------------------------------------------------------
+  if (sc.main) {
+    let timerSeq = 0;
+    flux.ui = {
+      view(id, def) {
+        views[id] = def;
+        calls.push(["ui.view", id]);
+      },
+      /** 与引擎 `flux.ui.h` 同义：节点是 `{k, p, c}`，子节点展平并丢弃 null/false/undefined。 */
+      h(kind, props, ...children) {
+        return { k: kind, p: { ...(props || {}) }, c: flatten(children) };
+      },
+      Fragment(props) {
+        return { k: "#fragment", p: {}, c: flatten([props && props.children]) };
+      },
+      toast(level, text) {
+        calls.push(["ui.toast", level, text]);
+      },
+    };
+
+    flux.commands = {
+      register(id, fn) {
+        calls.push(["commands.register", id]);
+        commands[id] = fn;
+      },
+    };
+
+    flux.rpc = {
+      handle(name, fn, opts) {
+        calls.push(["rpc.handle", name, canon(opts || {})]);
+        rpcHandlers[name] = fn;
+      },
+    };
+
+    flux.events = {
+      on(name, fn) {
+        calls.push(["events.on", name]);
+        (eventHandlers[name] || (eventHandlers[name] = [])).push(fn);
+      },
+    };
+
+    // 定时器只记录不执行：真跑 setTimeout 会让测试挂住，而本项目的视图不依赖定时刷新。
+    flux.timers = {
+      setTimeout(_fn, ms) {
+        calls.push(["timers.setTimeout", ms]);
+        return ++timerSeq;
+      },
+      setInterval(_fn, ms) {
+        calls.push(["timers.setInterval", ms]);
+        return ++timerSeq;
+      },
+      clear(id) {
+        calls.push(["timers.clear", id]);
+      },
+    };
+
+    // 不可枚举：现有四层测试会对 `flux.settings` 取快照，多出一个函数会污染 parity 比对。
+    Object.defineProperty(flux.settings, "update", {
+      enumerable: false,
+      value: async (entries) => {
+        calls.push(["settings.update", canon(entries)]);
+        if (sc.updateError) throw new Error(sc.updateError);
+        Object.assign(flux.settings, entries);
+      },
+    });
+  }
+
+  return { flux, calls, logs, views };
 }
 
 export function loadEntry(dir, name, flux) {
@@ -159,9 +252,15 @@ export function loadEntry(dir, name, flux) {
   return sandbox;
 }
 
-/** 跑一个场景，返回 `{ result | error, logs, calls }`（不含请求面投影，调用方自行投影）。 */
+/**
+ * 跑一个场景，返回 `{ result | error, logs, calls }`（不含请求面投影，调用方自行投影）。
+ *
+ * `calls` / `logs` 是**深拷贝快照**（parity 比对需要可序列化、稳定）。常驻 `main` 的测试要在
+ * 加载**之后**继续观察宿主调用（点按钮 → settings.update），所以额外给出 `liveCalls` ——
+ * 同一个数组的引用，会随调用持续增长。别拿 `calls` 断言交互期行为，那是快照。
+ */
 export async function runEntry(dir, sc) {
-  const { flux, calls, logs } = createFlux(sc);
+  const { flux, calls, logs, views } = createFlux(sc);
   let entry;
   try {
     entry = loadEntry(dir, sc.entry, flux);
@@ -176,7 +275,14 @@ export async function runEntry(dir, sc) {
   } catch (e) {
     error = String(e && e.message ? e.message : e);
   }
-  return { result, error, logs: scrubTs(canon(logs)), calls: scrubTs(canon(calls)) };
+  return {
+    result,
+    error,
+    logs: scrubTs(canon(logs)),
+    calls: scrubTs(canon(calls)),
+    liveCalls: calls,
+    views,
+  };
 }
 
 // ---------------------------------------------------------------------------

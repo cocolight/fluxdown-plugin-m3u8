@@ -40,7 +40,7 @@ git config core.hooksPath .githooks
 ```bash
 npm ci                # 安装依赖
 npm run typecheck     # 类型检查（兼静态检查）
-npm test              # 四层测试：parity / contract / intercept / postprocess
+npm test              # 五层测试：parity / contract / intercept / postprocess / ui
 ```
 
 `./scripts/check-fast.sh` 已经包含格式类断言（行尾空白、冲突标记、版本号一致、文档路由表），无需另跑格式化工具。
