@@ -19,7 +19,7 @@
 | `.agents/` | 工程协作文档，AI 与人共读 |
 | `scripts/` | 辅助脚本，含 `check-fast.sh` 快速门禁 |
 
-入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）、`main.tsx`（常驻：注册设置页签视图，JSX 渲染）。
+入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）、`main.tsx`（常驻：注册设置页签「插件设置」，三个页签 —— 基础/参数/去广告，JSX 渲染）。
 
 `main.tsx` 与其余四个不同类：它被引擎**求值一次**，注册发生在求值过程中，因此可以在文件顶层取用全局 `flux`；其余四个每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
 

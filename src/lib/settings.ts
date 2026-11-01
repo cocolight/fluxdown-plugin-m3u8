@@ -34,8 +34,6 @@ export interface Settings {
   htmlFallbackYtdlp: boolean;
   remuxToMp4: boolean;
   fixMuxFallback: boolean;
-  /** 仅界面用：设置页是否展开专业项。不参与任何下载逻辑。 */
-  expertMode: boolean;
   rangeCapKb: number;
 }
 
@@ -90,7 +88,6 @@ export function readSettings(): Settings {
     useYtdlp: bool("useYtdlp", false),
     htmlFallbackYtdlp: bool("htmlFallbackYtdlp", true),
     remuxToMp4: bool("remuxToMp4", true),
-    expertMode: bool("expertMode", false),
     fixMuxFallback: bool("fixMuxFallback", true),
     rangeCapKb: int("rangeCapKb", 0),
   };
