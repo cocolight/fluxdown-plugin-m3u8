@@ -68,4 +68,12 @@
 
 - tag 与 Release title 仍然保持一致；
 - 在 GitHub 上把该 Release 勾选为 **pre-release**；
-- `CHANGELOG.md` 里记在 `[Unreleased]` 下或单开 `[2.3.0-rc.1]` 节 —— 二选一，但同一项目内保持一致。
+- `CHANGELOG.md` 单开 `[2.3.0-rc.1]` 节（本项目自 3.0.0-rc1 起用这个口径），`Release guard` 按 tag 找同名节，必须带实际日期。
+
+**`manifest.json` / `package.json` 的版本在预发布时保持三段 `X.Y.Z`（目标版本号）**：SDK CLI 的
+`validatePackage` 恒以 strict 模式校验（`STRICT_SEMVER` 只收 `X.Y.Z`，不收预发布后缀），build / validate /
+pack 都过不去；引擎 `parse_semver` 虽裁掉预发布标识后再比较，但产物必须先过 CLI。故 rc 标识只落在
+tag / Release title / CHANGELOG 版本节三处（三处彼此一致），`npm run pack` 产物名含 rc 后缀、与 tag 对齐
+（pack 按 manifest 版本命名，需手工改名一次，仅预发布允许）。
+
+3.0.0-rc1 按本节执行过一次（2026-11-02）：tag `v3.0.0-rc1`，manifest 版本保持 `3.0.0`。
