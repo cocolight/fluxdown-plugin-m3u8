@@ -283,13 +283,19 @@ defineInterceptors({
 ### 6.5 `finalize` + `replaceWith`：把 remux 挪进来的冲动要压住
 
 看起来很美：`finalize` 在"下载完成、任务标记完成之前"运行，返回 `replaceWith` 会让**旧文件被删、任务指向
-新文件**，能顺带修掉现在 onDone remux 之后旧 `.ts`/`.mkv` 残留的问题。但存在一个**未解的约束**：
+新文件**，能顺带修掉现在 onDone remux 之后旧 `.ts`/`.mkv` 残留的问题。
 
-> API 参考明确写 `flux.ffmpeg.run` **仅在 `onDone` 可用**（其他上下文 `run` reject）；而拦截器指南又说
-> "声明 `ffmpeg` / `ytdlp` 权限的插件在 `finalize` 阶段用更长后处理预算"。
+**原先记在这里的"文档矛盾"已于 2026-11-02 实测解决**（详见 §九「2 号实测结论」）：两句都对 ——
+`finalize` 能用 ffmpeg，但**以 manifest 声明 `ffmpeg`/`ytdlp` 权限为前提**（`interceptors.rs:128`），
+此时预算从 5 秒换成 1830 秒。真机实测 `ffmpeg -version` 返回 0、`-i <fileName>` 能读到音视频流。
 
-两处表述冲突。**默认按保守解释**：remux 留在 `onDone`，只用 `recordArtifact` 补登记；把"finalize 内跑
-ffmpeg"列为 §8 待实测项 —— 若实测可用，再迁，收益是"任务记录的文件名/大小与实际产物一致"。
+但实测还暴露了一条文档里没有的约束：**ffmpeg 参数只认产物目录内的相对名，绝对路径会被拒**
+（`ffmpeg 参数 '/home/…/x.mp4' 被拒: 绝对路径`）。所以 `finalize` 里只能用 `ctx.fileName`，
+不能用 `ctx.filePath`。
+
+**结论仍是维持 `onDone`**，但理由从"不确定能不能用"变成"能用但收益不足以迁移"：
+`onDone` 与 `finalize` 都只对已存在的文件操作，迁移不产生新能力，只是语义更贴切。
+`replaceWith` 另有一条独立风险（`resolve()` 返回字段受限、失败表现是"文件不见了"），未验证前不碰。
 
 ### 6.6 拦截器接入的连带影响（易被忽略）
 
@@ -297,7 +303,7 @@ ffmpeg"列为 §8 待实测项 —— 若实测可用，再迁，收益是"任�
 | --- | --- |
 | 权限与授权 | 新增 `intercept` → 风险等级仍是**较高**（已因 `ffmpeg`/`ytdlp`/`auth` 判定为 elevated），但**用户必须重新批准**：已批准集合要求**精确匹配**，新增权限未批准则插件装上但保持停用，显示"需要授权" |
 | 熔断 | 拦截器调用计入熔断：**连续 3 次**超时或超内存 → 插件自动禁用。`segments` 对每条轨道调用一次，200 集剧集 = 400 次调用，规则必须是**纯本地计算**（不得 `flux.fetch`） |
-| 超时 | `interceptors.timeoutMs` 默认 5s（硬顶 30s），`liveSegments` 上限 2s，`refresh` 上限 5s |
+| 超时 | `interceptors.timeoutMs` 默认 5s（硬顶 30s），`liveSegments` 上限 2s，`refresh` 上限 5s；**`finalize` 带 `ffmpeg`/`ytdlp` 权限时 1830s** |
 | 审计 | 每次调用记一条 `intercept.<stage>`，目标为任务 id。规则若抛错，`onFailure:"continue"` 下会被记录并跳过 |
 | `match.urls` | 拦截器按**原始 URL 或 resolver 改写后 URL** 匹配；播放页 URL 不含 `.m3u8`，故必须用 `*://*/*` + 内部标记 fail-closed，不能依赖 URL 模式 |
 
@@ -544,9 +550,10 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
 
 **与方案原稿的偏离**
 
-1. **`finalize.replaceWith` 本轮不做，维持保守解释**。API 参考与拦截器指南对「`finalize` 里能否跑 ffmpeg」
-   仍然互相矛盾（§6.5）。M4 的收益（产物随任务删除、容器判断准确）不依赖它；贸然迁过去，一旦 `run` 被拒，
-   表现是「任务完成但文件不见了」—— 比孤儿文件严重得多。**保留在待实测 #2**，实测通过再单独做。
+1. **`finalize.replaceWith` 本轮不做**。2026-11-02 实测已证明 `finalize` 里**能**跑 ffmpeg（§九「2 号实测结论」），
+   所以原先"怕 `run` 被拒导致文件不见了"的顾虑只对了一半：`run` 能用，但 **ffmpeg 只接受产物目录内的相对名，
+   绝对路径被拒**，且 `replaceWith` 会让旧文件被删。M4 的收益（产物随任务删除、容器判断准确）不依赖它，
+   迁移只是语义更贴切、不产生新能力。**保留在待实测 #2 的后续**，真要做得先验 `replaceWith` 单独一项。
 
 2. **`.mp4` 的「轨对未合并」告警分支从死代码变活**。v1.8.0 的外层条件是 `INPUT_OK.test(video)`，
    而白名单里**没有** `.mp4`，所以那个 `if (/\.mp4$/i.test(video))` 分支永远进不去 —— 轨对任务、视频又是 mp4 时
@@ -578,7 +585,8 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
 
 - `resolvers[0].memoryLimitMb`（需 0.6.2）—— 剧集页扫描已有 500 条上限，不急。
 - ~~`flux.fs` 写 `cookies.txt` 喂 yt-dlp~~ —— **已在 3.0.0 实现**（`src/lib/ytdlp.ts`），不再是待办。
-- ~~`finalize` / `failed` 拦截阶段~~ —— `failed` 已在 3.0.0 接入；`finalize` 仍待装机实测（文档矛盾见上）。
+- ~~`finalize` / `failed` 拦截阶段~~ —— `failed` 已在 3.0.0 接入；`finalize` 已于 2026-11-02 实测**可用**
+  （含"只能用相对名"这条约束），但维持不迁移，理由见 §6.5。
 
 ---
 
@@ -696,7 +704,7 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 | # | 待验点 | 为什么重要 | 判定方法 |
 | --- | --- | --- | --- |
 | 1 | `typeof btoa` / `typeof URL` | 决定能否删 `b64encode`，以及类型假设是否成立 | 在 resolver 里 `flux.logger.info(typeof btoa, typeof URL)` |
-| 2 | `finalize` 阶段 `flux.ffmpeg.run` 是否可用 | 决定 remux 能否迁出 `onDone` | 造一个 `.ts` 任务，finalize 里试跑 `-version` |
+| 2 | ~~`finalize` 阶段 `flux.ffmpeg.run` 是否可用~~ **已实测（2026-11-02，0.6.6）** | 决定 remux 能否迁出 `onDone` | **可用**。见下方「2 号实测结论」 |
 | 3 | `segments` 的 `id` 语义与 `drop` 边界 | 绝对 media sequence；丢错一位会毁掉整条流 | 对同一流分别 `drop:[n]` 与 `drop:[]`，比对产物时长与可播性 |
 | 4 | `resolver.request` 与 `variants` 同时返回 | 补丁是否对"用户手选变体"后的下载生效 | 手选 720p 后抓包看 Referer/Cookie 是否仍带上 |
 | 5 | `originHeaders` 的 host 归一化 | 决定 CDN 是否真的不收 Cookie | 用两个子域（`a.site.com` / `cdn.site.com`）分别登记，观察注入 |
@@ -716,6 +724,37 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 > 第 19–23 项（设置页签渲染、`flux.settings.update` 可见时机、`main` 空闲回收、视图 key 重复、
 > `tabs` 切换）随自定义视图删除而失效（ADR-0009），已从清单移除。设置表单由宿主渲染，
 > 其两端表现属宿主自身行为，不再是插件待验点。
+
+### 2 号实测结论（2026-11-02，FluxDown 0.6.6 / 协议 26 / ffmpeg 8.1.3）
+
+**矛盾已解**：API 参考说「`flux.ffmpeg.run` 只在 `onDone` 可用」，拦截器指南说「`finalize` 有更长预算」
+—— 两句都对，说的不是同一件事。源码 `native/engine/src/plugin/interceptors.rs:125-128`：
+
+```rust
+let finalize = stage == InterceptStage::Finalize;
+let long_running = finalize && (ffmpeg_permitted || ytdlp_permitted);
+```
+
+长预算**以声明 `ffmpeg` 或 `ytdlp` 权限为前提**：普通拦截阶段墙钟 5 秒（`DEFAULT_INTERCEPT_TIMEOUT`），
+`finalize` 且带上述权限时换成 `EXTERNAL_TOOL_HOOK_BUDGET` = **1830 秒**（`manager.rs:61`）。
+另有 `ffmpeg_root: if finalize { file_root } else { None }`（`interceptors.rs:160`）—— 产物目录**只在
+`finalize` 阶段挂进 ffmpeg 牢笼**，这正是普通阶段用不了 ffmpeg 读产物的原因。
+
+真机实测（插件在 `finalize` 里调 `flux.ffmpeg.run`）：
+
+| 调用 | 结果 |
+| --- | --- |
+| `ffmpeg -version` | **code 0**，`ffmpeg version 8.1.3` |
+| `ffmpeg -i <fileName>`（**相对名**） | **成功打开**，stderr 里读到 `Stream #0:0 Video: h264`、`Stream #0:1 Audio: aac` |
+| `ffmpeg -i <filePath>`（**绝对路径**） | **被拒**：`ffmpeg 参数 '/home/…/x.mp4' 被拒: 绝对路径` |
+
+**结论：`finalize` 里可以跑 ffmpeg，但只能用 `ctx.fileName` 这个裸文件名，不能用 `ctx.filePath`。**
+牢笼把参数限制在产物目录内的相对名 —— 这条约束此前没记在文档里，是实测才暴露的。
+`ctx.audioPath` 实测为 `null`（单文件任务是常态，多轨任务待验）。
+
+对 M4 的意义：`onDone` 里的 remux / 产物登记**可以迁到 `finalize`**，好处是阶段更早、拿到的是
+同一任务上下文（`task`），且预算从 5 分钟级放宽到 30 分钟级。但迁移不改收益（两者都只对已存在文件
+操作），属「更合语义」而非「新能力」，故仍列为可选。
 
 ---
 

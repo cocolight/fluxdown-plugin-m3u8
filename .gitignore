@@ -49,3 +49,6 @@ _build_exe.build/
 .env.*
 !.env.example
 !*.env.example
+
+# 本机调试脚本（装机实测用，含 daemon 握手与任务投放，不进仓库）
+.tooling/
