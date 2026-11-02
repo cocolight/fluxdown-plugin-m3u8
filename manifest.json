@@ -238,11 +238,11 @@
     {
       "key": "authCookie",
       "title": "站点 · 登录凭据",
-      "description": "只发给同一站点的请求。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
+      "description": "只发给同一站点的请求。首行可写 @站点 限定范围（如 @a.com），不写则对所有站点生效。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
       "type": "string",
       "widget": "textarea",
       "default": "",
-      "helperScript": "copy(document.cookie)",
+      "helperScript": "copy('@'+location.hostname+'\\n'+document.cookie)",
       "helperLabel": "复制取 Cookie 的脚本"
     },
     {
