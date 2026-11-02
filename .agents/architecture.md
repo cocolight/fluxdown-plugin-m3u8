@@ -19,12 +19,12 @@
 | `.agents/` | 工程协作文档，AI 与人共读 |
 | `scripts/` | 辅助脚本，含 `check-fast.sh` 快速门禁 |
 
-入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`subscribe.ts`（订阅枚举）、`intercept.ts`（`segments` 阶段去广告）。四个入口每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
+入口与职责：`resolver.ts`（发现 master、选变体、注入请求面）、`hooks.ts`（`onDone` 容器探测与产物登记、`onError`/`onCancel` 清标记）、`subscribe.ts`（订阅枚举）、`intercept.ts`（按阶段分派：`segments` 去广告、`refresh` 换发凭据、`failed` 失败归因）。四个入口每次调用都是全新上下文，靠 `lib/install.ts` 把入口函数挂到 `globalThis`。
 
 ## 2. 分层与依赖方向
 
 - 依赖方向单向：`src/entry/*` → `src/lib/*` → 无。`lib` 之间允许互相引用，但**不得成环**。
-- `lib` 内部分两类：纯函数（`url` / `hls` / `adrules` / `naming` / `text` / `patterns` / `probe` 的解析部分）与宿主调用（`http` / `request` / `install` / `handled` / `items`）。纯函数不得直接调 `flux.*`，宿主调用才碰。
+- `lib` 内部分两类：纯函数（`url` / `hls` / `adrules` / `naming` / `text` / `patterns` / `probe` 的解析部分 / `failure`）与宿主调用（`http` / `request` / `install` / `handled` / `items` / `refresh`）。纯函数不得直接调 `flux.*`，宿主调用才碰。
 - **运行时四个入口彼此独立**：各自编译成一个 `.js`，同一模块会在多个产物里各存一份（`adrules` 就在 resolver 与 intercept 产物里各有一份）；靠 tree-shaking 保证只带进真正用到的部分。源码侧正常 `import` 即可，不要为「省体积」写跨入口的运行时依赖 —— 那在 QuickJS 里不存在。
 - 沙箱没有 `DOM`、`URL`、`setTimeout`、`fetch`。`tsconfig.json` 的 `lib` 不含 `DOM` 是**门禁**而非习惯：`new URL` / `btoa` 在编译期即失败，网络请求只走 `flux.fetch`。
 
