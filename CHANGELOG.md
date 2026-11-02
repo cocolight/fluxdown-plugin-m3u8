@@ -16,11 +16,18 @@
 
 ### Added
 
+- 拦截器新增 `failed` 阶段：按失败类型决定是否重试，只对瞬时网络错误与 5xx 重试，认证 / 404 / 磁盘 / 解密 / 取消一律不接管
+- 拦截器新增 `refresh` 阶段：401/403/410 时重新访问任务地址取新 Cookie 并合并下发，最多换发一次
+- 新增 `src/lib/failure.ts`（失败归因）与 `src/lib/refresh.ts`（凭据换发）
+- 新增 `src/lib/task.ts`：拦截器侧的极简任务形状，让 lib 层不必依赖 SDK 的完整类型
 - 订阅 provider 支持防抓页解锁：遇「安全检查」页时解出 Cookie 并对同一地址重取一次（此前只会解析出空 feed，用户看不出是被拦了）
 - 新增 `tests/subscribe.mjs`：订阅契约 14 项（解锁只重取一次、不循环、订阅源 Cookie/UA 不丢且合并而非覆盖）
 
 ### Changed
 
+- `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
+- 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
+- 拦截器契约 33 → 72 项：新增 `failed` 23 项、`refresh` 12 项
 - 六层测试的断言维度收口到 `CONTRIBUTING.md`：README 与 `AGENTS.md` §2 不再各自复述 `npm run <层>`，只留入口与分层口径
 - README「开发约定」并入 `CONTRIBUTING.md`：分支、钩子、ROADMAP/CHANGELOG 要求与文档落点原属重复项，README 只留指路
 - README 清理陈旧内容：删除「已停用：本地源头去广告」整节、v1.8.0 源码目录叙事与 2.1.0 升级提示
@@ -30,6 +37,7 @@
 
 ### Fixed
 
+- `errnoOf()` 只认白名单里的错误码，不再取正则第一个匹配（`read error: ECONNRESET` 曾先命中 `ERROR`，导致该重试的失败被判成认不出）
 - `AGENTS.md` §8 删掉对已删除文件 `main.tsx` / `rulecheck.ts` / `adpresets.ts` 的引用，改为指向 `manifest.json` 与 ADR-0009
 - 测试分层表述统一为六层：补上 `subscribe`（`AGENTS.md`、`architecture.md`、`configuration.md`、`definition-of-done.md`、`releasing.md`、`CONTRIBUTING.md`）
 - `README.md` 安装说明的 `.fxplug` 文件名更正为 `m3u8-resolver@cocolight-<版本号>.fxplug`

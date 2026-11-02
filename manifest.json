@@ -40,7 +40,9 @@
   "interceptors": {
     "entry": "intercept.js",
     "stages": [
-      "segments"
+      "segments",
+      "refresh",
+      "failed"
     ],
     "match": {
       "urls": [

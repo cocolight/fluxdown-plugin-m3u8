@@ -494,6 +494,289 @@ const dropOf = (r) => (r.result && r.result.drop ? r.result.drop : null);
     ));
 }
 
+// ---------------------------------------------------------------------------
+// 9. `failed` 阶段：失败归因与定向重试
+// ---------------------------------------------------------------------------
+
+/** 跑一次 `failed` 阶段。`sc` 里没给 task 时默认用 TASK（已在标记里）。 */
+async function runFailed(sc) {
+  const r = await runEntry(DIST, {
+    entry: "intercept",
+    settings: sc.settings || {},
+    store: sc.store === undefined ? HANDLED : sc.store,
+    invoke: (e) =>
+      e.intercept({
+        stage: "failed",
+        task: sc.task === undefined ? TASK : sc.task,
+        errorMessage: sc.errorMessage === undefined ? "" : sc.errorMessage,
+        httpStatus: sc.httpStatus === undefined ? null : sc.httpStatus,
+        autoRetryCount: sc.autoRetryCount === undefined ? 0 : sc.autoRetryCount,
+      }),
+  });
+  if (r.loadError) throw new Error(r.loadError);
+  if (r.error) throw new Error(`failed 阶段抛错（拦截器不得外抛）：${r.error}`);
+  return r;
+}
+
+const delayOf = (r) => (r.result && r.result.retry ? r.result.retry.delayMs : null);
+
+{
+  // 9.1 不归我管 / 未知阶段：一律 null
+  await ck("failed：别人的任务不接管", async () =>
+    eq((await runFailed({ store: {}, errorMessage: "ECONNRESET", httpStatus: null })).result, null));
+
+  await ck("failed：未知阶段返回 null", async () => {
+    const r = await runEntry(DIST, {
+      entry: "intercept",
+      settings: {},
+      store: HANDLED,
+      invoke: (e) => e.intercept({ stage: "prepare", task: TASK }),
+    });
+    return eq(r.result, null);
+  });
+
+  // 9.2 瞬时网络错误要重试
+  for (const [label, msg] of [
+    ["ECONNRESET", "request failed: ECONNRESET"],
+    ["ETIMEDOUT", "read error ETIMEDOUT"],
+    ["超时文本", "连接超时"],
+    ["小写 timeout", "operation timed out after 30s"],
+  ]) {
+    await ck(`failed：${label} → 重试`, async () => {
+      const r = await runFailed({ errorMessage: msg, httpStatus: null });
+      return r.result && r.result.retry ? (delayOf(r) > 0 ? true : "delayMs 应为正数") : `应重试，实际 ${show(r.result)}`;
+    });
+  }
+
+  // 9.3 5xx 与限流要重试，且限流等得更久
+  await ck("failed：503 → 重试", async () => {
+    const r = await runFailed({ errorMessage: "service unavailable", httpStatus: 503 });
+    return r.result && r.result.retry ? true : "5xx 应重试";
+  });
+
+  await ck("failed：429 等待长于 5xx（限流不该猛击）", async () => {
+    const a = delayOf(await runFailed({ errorMessage: "", httpStatus: 503 }));
+    const b = delayOf(await runFailed({ errorMessage: "", httpStatus: 429 }));
+    return b > a ? true : `429 的等待应更长：503=${a}ms，429=${b}ms`;
+  });
+
+  // 9.4 重试无效的形态：全部 null
+  for (const [label, sc] of [
+    ["401 凭据", { errorMessage: "unauthorized", httpStatus: 401 }],
+    ["403 拒绝", { errorMessage: "forbidden", httpStatus: 403 }],
+    ["404 缺失", { errorMessage: "not found", httpStatus: 404 }],
+    ["410 移除", { errorMessage: "gone", httpStatus: 410 }],
+    ["磁盘满", { errorMessage: "写入失败: ENOSPC: no space left on device", httpStatus: null }],
+    ["无权限", { errorMessage: "EACCES: permission denied", httpStatus: null }],
+    ["解密失败", { errorMessage: "PKCS7 padding check failed (Unpad Error)", httpStatus: null }],
+    ["DRM", { errorMessage: "SAMPLE-AES keyformat not supported", httpStatus: null }],
+    ["认不出", { errorMessage: "something odd happened", httpStatus: null }],
+    ["空消息空状态", { errorMessage: "", httpStatus: null }],
+  ]) {
+    await ck(`failed：${label} → 不接管`, async () => eq((await runFailed(sc)).result, null));
+  }
+
+  // 9.5 取消优先于一切。这条必须与「纯 ECONNRESET 要重试」成对看 —— 只断言 null 的话，
+  //     「取消优先」被删掉后结果仍是 null（cancelled 本就不在重试白名单），断言没有区分力。
+  await ck("failed：取消优先于瞬时错误（对照组必须重试）", async () => {
+    const withCancel = (await runFailed({ errorMessage: "download cancelled: ECONNRESET", httpStatus: null })).result;
+    const noCancel = (await runFailed({ errorMessage: "read error: ECONNRESET", httpStatus: null })).result;
+    if (withCancel !== null) return `带「取消」字样时不得重试，实际 ${show(withCancel)}`;
+    if (!noCancel || !noCancel.retry) return `不带「取消」字样的 ECONNRESET 应重试，实际 ${show(noCancel)}`;
+    return true;
+  });
+
+  // 9.6 重试次数上限
+  await ck("failed：autoRetryCount 达上限 → 不接管", async () =>
+    eq((await runFailed({ errorMessage: "ECONNRESET", autoRetryCount: 3 })).result, null));
+
+  await ck("failed：autoRetryCount 未达上限 → 仍重试", async () => {
+    const r = await runFailed({ errorMessage: "ECONNRESET", autoRetryCount: 2 });
+    return r.result && r.result.retry ? true : "2 < 3 应继续重试";
+  });
+
+  // 9.7 HTTP 状态优先于文本：403 的正文里可能恰好含 "timeout" 字样
+  await ck("failed：403 优先于正文里的超时字样", async () =>
+    eq((await runFailed({ errorMessage: "gateway timeout", httpStatus: 403 })).result, null));
+
+  // 9.8 ENOTFOUND 属硬错（域名解析失败多为配置错误，重试无益）
+  await ck("failed：ENOTFOUND 不重试", async () =>
+    eq((await runFailed({ errorMessage: "getaddrinfo ENOTFOUND cdn.example" })).result, null));
+
+  // 9.9 回归：errno 必须是白名单里的那个，不能取正则的第一个匹配。
+  // `read error: ECONNRESET` 里 `ERROR` 同样形如 errno —— 取第一个匹配会拿到 `ERROR`，
+  // 于是这条本该重试的消息被判成「认不出」而放手。
+  for (const [label, msg] of [
+    ["消息里含 ERROR 字样", "read error: ECONNRESET"],
+    ["含 ERROR 且 errno 在句首", "ERROR: ETIMEDOUT while reading"],
+    ["多个候选只认白名单", "Error EPIPE broken pipe"],
+  ]) {
+    await ck(`failed：${label} → 仍能识别 errno 并重试`, async () => {
+      const r = await runFailed({ errorMessage: msg, httpStatus: null });
+      return r.result && r.result.retry ? true : `应重试，实际 ${show(r.result)}`;
+    });
+  }
+
+  await ck("failed：EXAMPLES 之类非 errno 词不误判", async () =>
+    eq((await runFailed({ errorMessage: "see EXAMPLES section", httpStatus: null })).result, null));
+}
+
+// ---------------------------------------------------------------------------
+// 10. `refresh` 阶段：凭据换发
+// ---------------------------------------------------------------------------
+
+/** 跑一次 `refresh` 阶段。`sc.routes` 是 flux.fetch 的路由表（与 parity harness 同形）。 */
+async function runRefresh(sc) {
+  const r = await runEntry(DIST, {
+    entry: "intercept",
+    settings: sc.settings || {},
+    store: sc.store === undefined ? HANDLED : sc.store,
+    routes: sc.routes || {},
+    invoke: (e) =>
+      e.intercept({
+        stage: "refresh",
+        task: sc.task === undefined ? TASK : sc.task,
+        request: { url: sc.refusedUrl || "https://cdn.test/hls/v/index.m3u8", method: "GET" },
+        status: sc.status === undefined ? 403 : sc.status,
+        refreshCount: sc.refreshCount === undefined ? 0 : sc.refreshCount,
+      }),
+  });
+  if (r.loadError) throw new Error(r.loadError);
+  if (r.error) throw new Error(`refresh 阶段抛错（拦截器不得外抛）：${r.error}`);
+  return r;
+}
+
+const cookiesOf = (r) => (r.result && r.result.cookies ? r.result.cookies : null);
+const fetchCalls = (r) => r.calls.filter((c) => c[0] === "fetch");
+
+// 站点地址（凭据同源闸按它判断）与 CDN 地址故意不同：真实场景里清单在站内、分片在 CDN。
+const SITE = "https://site.test/watch/1";
+
+{
+  // 10.1 不归我管 / 非鉴权状态码 → 不发请求、返回 null
+  await ck("refresh：别人的任务不发请求", async () => {
+    const r = await runRefresh({
+      store: {},
+      status: 403,
+      routes: { [SITE]: { headers: { "set-cookie": "sid=new" } } },
+    });
+    if (r.result !== null) return `应返回 null，实际 ${show(r.result)}`;
+    return fetchCalls(r).length === 0 ? true : `不应发请求，实际 ${fetchCalls(r).length} 次`;
+  });
+
+  await ck("refresh：404 不换发凭据（换凭据无意义）", async () => {
+    const r = await runRefresh({ status: 404, routes: { [SITE]: { headers: { "set-cookie": "sid=new" } } } });
+    if (r.result !== null) return `应返回 null，实际 ${show(r.result)}`;
+    return fetchCalls(r).length === 0 ? true : `不应发请求，实际 ${fetchCalls(r).length} 次`;
+  });
+
+  await ck("refresh：未知阶段返回 null", async () => {
+    const r = await runEntry(DIST, {
+      entry: "intercept",
+      settings: {},
+      store: HANDLED,
+      invoke: (e) => e.intercept({ stage: "probed", task: TASK }),
+    });
+    return eq(r.result, null);
+  });
+
+  // 10.2 拿到新 Cookie 就下发，且是**合并**而非替换
+  await ck("refresh：403 时重新访问任务地址并下发新 Cookie", async () => {
+    const r = await runRefresh({
+      settings: { authCookie: "old=1; keep=2" },
+      status: 403,
+      routes: { [SITE]: { headers: { "set-cookie": "sid=abc123; Path=/; HttpOnly" } } },
+    });
+    const ck = cookiesOf(r);
+    if (!ck) return `应下发 cookies，实际 ${show(r.result)}`;
+    return ck.indexOf("sid=abc123") >= 0 ? true : `新 Cookie 未下发：${ck}`;
+  });
+
+  await ck("refresh：新 Cookie 与旧值合并（不整串替换）", async () => {
+    const r = await runRefresh({
+      settings: { authCookie: "old=1; keep=2" },
+      status: 401,
+      routes: { [SITE]: { headers: { "set-cookie": "sid=abc123" } } },
+    });
+    const ck = cookiesOf(r) || "";
+    // 旧值必须还在：refresh 的职责是补，不是抹。
+    return ck.indexOf("old=1") >= 0 && ck.indexOf("keep=2") >= 0 && ck.indexOf("sid=abc123") >= 0
+      ? true
+      : `应保留旧 Cookie 并加入新值，实际 ${ck}`;
+  });
+
+  // 10.3 纪律 1：只换发一次
+  await ck("refresh：refreshCount ≥ 1 → 不再动作且不发请求", async () => {
+    const r = await runRefresh({
+      status: 403,
+      refreshCount: 1,
+      routes: { [SITE]: { headers: { "set-cookie": "sid=x" } } },
+    });
+    if (r.result !== null) return `应返回 null，实际 ${show(r.result)}`;
+    return fetchCalls(r).length === 0 ? true : `不应再发请求，实际 ${fetchCalls(r).length} 次`;
+  });
+
+  // 10.4 纪律 3：取不到就不下发
+  await ck("refresh：重新访问返回非 2xx → 不下发", async () => {
+    const r = await runRefresh({
+      status: 403,
+      routes: { [SITE]: { status: 500, headers: { "set-cookie": "sid=x" } } },
+    });
+    return eq(r.result, null);
+  });
+
+  await ck("refresh：响应无 Set-Cookie → 不下发", async () => {
+    const r = await runRefresh({ status: 403, routes: { [SITE]: { headers: {} } } });
+    return eq(r.result, null);
+  });
+
+  await ck("refresh：新 Cookie 与现值相同 → 不下发（不变补丁等于没补）", async () => {
+    const r = await runRefresh({
+      settings: { authCookie: "sid=same" },
+      status: 403,
+      routes: { [SITE]: { headers: { "set-cookie": "sid=same" } } },
+    });
+    return eq(r.result, null);
+  });
+
+  // 10.5 失败不得外抛
+  await ck("refresh：fetch 抛错时吞掉并返回 null", async () => {
+    const r = await runRefresh({
+      status: 403,
+      routes: {
+        [SITE]: () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    return eq(r.result, null);
+  });
+
+  // 10.6 多条 Set-Cookie 合并（宿主可能用逗号拼接）
+  await ck("refresh：逗号拼接的多条 Set-Cookie 全部取出", async () => {
+    const r = await runRefresh({
+      status: 403,
+      routes: { [SITE]: { headers: { "set-cookie": "a=1; Path=/, b=2; Path=/, c=3" } } },
+    });
+    const ck = cookiesOf(r) || "";
+    return ck.indexOf("a=1") >= 0 && ck.indexOf("b=2") >= 0 && ck.indexOf("c=3") >= 0
+      ? true
+      : `三条都应取出，实际 ${ck}`;
+  });
+
+  await ck("refresh：Expires 里的逗号不被当成 Cookie 分隔符", async () => {
+    const r = await runRefresh({
+      status: 403,
+      routes: {
+        [SITE]: { headers: { "set-cookie": "sid=abc; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/" } },
+      },
+    });
+    const ck = cookiesOf(r) || "";
+    if (ck.indexOf("sid=abc") < 0) return `sid 未取出：${ck}`;
+    return ck.indexOf("Oct") < 0 ? true : `日期被误当 Cookie：${ck}`;
+  });
+}
+
 console.log(`\n${pass}/${pass + fail} 项拦截器契约通过`);
 if (fail) {
   console.error(`\n${fail} 项未通过 —— 拦截器的边界纪律不符合预期。`);

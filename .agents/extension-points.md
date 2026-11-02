@@ -36,11 +36,12 @@
 
 ## 加一个拦截阶段
 
-1. `manifest.json` 的 `interceptors.stages` 追加阶段名（当前只有 `segments`）。
-2. `src/entry/intercept.ts` 按 `ctx.stage` 分派，未知阶段返回「不干预」。
-3. 任何新阶段都要保持 fail-closed：判断不了就不改。
-4. 契约测试覆盖：未知阶段、空数据、非本插件任务。
-5. 该阶段是否在目标引擎版本提供，写进 `.agents/sdk-migration.md` 的版本门槛表。
+1. `manifest.json` 的 `interceptors.stages` 追加阶段名（当前 `segments` / `refresh` / `failed`）。
+2. `src/entry/intercept.ts` 的 `intercept()` 按 `ctx.stage` 分派，未知阶段返回「不干预」。
+3. 先定这个阶段能不能做 IO：`segments` 必须纯本地（每条轨道调一次，一次 fetch 就可能触发熔断把 resolver 一起停掉）；`failed` 只允许读存储；`refresh` 才允许发请求。把约束写成注释，不要靠记忆。
+4. 任何新阶段都要保持 fail-closed：判断不了就不改，且**不改变引擎默认语义**。想表达「不要重试」时返回 `null`，让引擎按自己的默认策略走。
+5. 契约测试覆盖：未知阶段、空数据、非本插件任务、以及该阶段「不该发请求时确实没发」。
+6. 该阶段是否在目标引擎版本提供，写进 `.agents/sdk-migration.md` 的版本门槛表。
 
 ## 提升 `minAppVersion`
 

@@ -61,29 +61,40 @@ function takeCI(h: Record<string, string>, name: string): string | undefined {
  * `ctx.authRef → flux.auth.get()`，靠宿主的按站点登录对话框写入档案；那个模型与
  * 「站点无关的全通配解析器」不匹配，已随登录入口一并去掉。
  *
- * 归属站点取**任务自身 URL**（`ctx.url`）的 origin —— 用户粘贴的就是要下载的地址，
- * 它的 origin 天然是凭据该去的地方。目标与它不同源时**整条不注入**并记日志：
- * 清单在站内、分片在 CDN 的常见形态下，Cookie 不会跟着发给 CDN。
+ * 归属站点取**任务自身 URL** 的 origin —— 用户粘贴的就是要下载的地址，它的 origin 天然是
+ * 凭据该去的地方。目标与它不同源时**整条不注入**并记日志：清单在站内、分片在 CDN 的常见
+ * 形态下，Cookie 不会跟着发给 CDN。
+ *
+ * `siteUrl` 显式传入而不是从 `env.ctx` 取，是因为 `refresh` 阶段也要复用这套逻辑，而那时
+ * 手上只有 `task.sourceUrl`（任务原始地址）、没有 resolver 的 `ctx`。两处语义相同，共用
+ * 一份实现才能保证「同一站点算出的凭据一定一样」。
  */
-function credentialOrigin(env: Env, targetUrl: string): OriginHeaders | null {
-  const raw = env.s.authCookie.trim();
-  if (!raw) return null;
+export function credentialOrigin(
+  raw: string,
+  siteUrl: string,
+  targetUrl: string,
+  quiet?: boolean,
+): OriginHeaders | null {
+  const text = raw === null || raw === undefined ? "" : String(raw).trim();
+  if (!text) return null;
 
-  const site = safeOrigin(env.ctx.url);
+  const site = safeOrigin(siteUrl);
   const target = parseUrl(targetUrl);
   const key = target ? target.origin : "";
   if (!site || !key || site !== key) {
-    flux.logger.info(
-      "[m3u8-resolver] 登录凭据归属站点 " +
-        (site || "(任务地址无 origin)") +
-        " 与下载目标 " +
-        (key || targetUrl) +
-        " 不同源，未注入",
-    );
+    if (!quiet) {
+      flux.logger.info(
+        "[m3u8-resolver] 登录凭据归属站点 " +
+          (site || "(任务地址无 origin)") +
+          " 与下载目标 " +
+          (key || targetUrl) +
+          " 不同源，未注入",
+      );
+    }
     return null;
   }
 
-  const cred = parseCredential(raw, site);
+  const cred = parseCredential(text, site);
   return cred ? { origin: cred.origin, headers: cred.headers } : null;
 }
 
@@ -130,7 +141,7 @@ export async function requestPatch(env: Env, targetUrl: string): Promise<Request
   if (origin) merged["Origin"] = origin;
 
   // 5) 凭据：同源才注入，且不覆盖用户显式写的同名头
-  const cred = credentialOrigin(env, targetUrl);
+  const cred = credentialOrigin(s.authCookie, ctx.url, targetUrl);
   if (cred) {
     const keep: Record<string, string> = {};
     for (const k in cred.headers) {
