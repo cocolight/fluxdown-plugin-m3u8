@@ -1,4 +1,4 @@
-import type { ResolveContext, ResolveResult, ResolveVariant } from "fluxdown-plugin-sdk";
+import type { ResolveContext, ResolveResult, ResolveVariant, ToolOutcome } from "fluxdown-plugin-sdk";
 import type { ResolveCtx } from "../types";
 import type { Env } from "../lib/env";
 import type { Listing } from "../lib/discovery";
@@ -24,7 +24,9 @@ import {
 } from "../lib/naming";
 import { decodeItem, encodeItem } from "../lib/items";
 import { detectListing, extractDash, extractMaster, extractTitle, warnNoTitle } from "../lib/discovery";
-import { parseUrl } from "../lib/url";
+import { parseUrl, safeOrigin, hostKey } from "../lib/url";
+import { mergeCookie } from "../lib/http";
+import { COOKIES_FILE, toNetscapeCookies, ytdlpArgsFromCredential } from "../lib/ytdlp";
 import { sanitize } from "../lib/text";
 import {
   isAudioOnlyVariant,
@@ -363,12 +365,65 @@ async function resolveSecondStage(env: Env): Promise<ResolveResult | null> {
 }
 
 // ================= 增强 B：yt-dlp 抽直链 =================
+/**
+ * 凭据怎么送进 yt-dlp。
+ *
+ * 分两路（详见 `lib/ytdlp.ts` 的文件头）：Cookie 写 `cookies.txt` 走 `--cookies`，其余头
+ * （`Authorization` 等）走 `--add-header`。只做前者会让 bearer / basic 写法完全失效 ——
+ * 那种凭据变不成 cookie 行。
+ *
+ * `cookies.txt` 写在 `flux.fs`（与 yt-dlp 的 cwd 同一根目录），**用完立刻删**：它是明文
+ * 凭据，残留就等于把用户 Cookie 长期摊在磁盘上。`try/finally` 保证抛错也删。
+ *
+ * 拿不到凭据时既不写文件也不加参数，行为与改造前一致 —— 这是 fail-open 的方向，
+ * 宁可少带也不能带错。
+ */
+async function runYtdlpWithCredential(env: Env, extraArgs: string[]): Promise<ToolOutcome> {
+  if (!flux.ytdlp) throw new Error("yt-dlp 组件不可用");
+  const { ctx, s } = env;
+
+  // 归属站点 = 任务自身 URL 的 origin，与 `fetchHeaders` / `originHeaders` 同一口径。
+  const origin = safeOrigin(ctx.url);
+  const { cookie, addHeaders } = ytdlpArgsFromCredential(s.authCookie, origin);
+  // 站内挑战解出的 Cookie 也带上：它和 `authCookie` 未必重叠，合并去重即可。
+  const challenge = origin ? env.rc.cookies[hostKey(ctx.url)] : "";
+  const merged = mergeCookie(cookie, challenge);
+  // secure 列跟着任务 URL 的 scheme 走：写死 TRUE 会让 HTTP 站点的 cookie 全部失效。
+  const body = toNetscapeCookies(merged, hostKey(ctx.url), /^https:/i.test(origin));
+
+  const args: string[] = [];
+  let wrote = false;
+  if (body) {
+    try {
+      await flux.fs.writeFile(COOKIES_FILE, body);
+      wrote = true;
+      args.push("--cookies", COOKIES_FILE);
+    } catch (e) {
+      // 写不进去不是致命错：不带 Cookie 继续跑，比整个委派失败好。
+      flux.logger.warn("[m3u8-resolver] cookies.txt 写入失败，改用无凭据委派:", String(e));
+    }
+  }
+  for (let i = 0; i < addHeaders.length; i++) args.push(addHeaders[i]);
+
+  try {
+    return await flux.ytdlp.run({ args: args.concat(extraArgs) });
+  } finally {
+    if (wrote) {
+      try {
+        await flux.fs.remove(COOKIES_FILE);
+      } catch (e) {
+        flux.logger.warn("[m3u8-resolver] cookies.txt 清理失败:", String(e));
+      }
+    }
+  }
+}
+
 async function resolveViaYtdlp(env: Env): Promise<ResolveResult> {
   const { ctx, s } = env;
   flux.logger.info("[m3u8-resolver] 走 yt-dlp 委派:", ctx.url);
-  if (!flux.ytdlp) throw new Error("yt-dlp 组件不可用");
-  const r = await flux.ytdlp.run({ args: ["-J", "--no-warnings", ctx.url] });
+  const r = await runYtdlpWithCredential(env, ["-J", "--no-warnings", ctx.url]);
   if (r.code !== 0) throw new Error("yt-dlp 失败: " + (r.stderr || "").slice(-400));
+
   const info = JSON.parse(r.stdout) as { url?: string; title?: string; formats?: { url?: string }[] };
   const formats = Array.isArray(info.formats) ? info.formats : [];
   const direct = info.url || (formats.length ? formats[formats.length - 1].url : undefined);

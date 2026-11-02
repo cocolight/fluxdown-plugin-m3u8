@@ -318,7 +318,7 @@ ffmpeg"列为 §8 待实测项 —— 若实测可用，再迁，收益是"任�
 | --- | --- | --- |
 | 分段线程数可调 | `RequestPatch.segments`（覆盖本次运行的用户线程数） | 现在只能全局设；HLS CDN 限流时分站调优有用 |
 | 小 `Range` 直链兼容 | `RequestPatch.maxRangeBytes`（≥64KiB，需 `0.6.0`） | 网盘 CDN"单请求 > 5MiB 就 403"这类场景，现在只能整体单线程 |
-| yt-dlp 带 Cookie 文件 | `flux.fs.writeFile('cookies.txt', …)` + `--cookies cookies.txt`（白名单内） | 现在只能靠 `--add-header` 传 Cookie，长 Cookie 易被命令行长度限制 |
+| yt-dlp 带 Cookie 文件 | `flux.fs.writeFile('cookies.txt', …)` + `--cookies cookies.txt`（白名单内） | **已实现（3.0.0）**。Cookie 写文件走 `--cookies`，`Authorization` 等头走 `--add-header`（bearer/basic 写法变不成 cookie 行，只做文件会静默失效） |
 | 大清单解析 | `resolvers[0].memoryLimitMb`（默认 64MiB，上限 512，需 `0.6.2`） | 剧集页正则扫描 500 条上限已有，不必急 |
 
 ---
@@ -577,8 +577,8 @@ CUE 成对性（含只有 OUT 无 IN、单段自成块、多块并存）、DATER
 **没有做的**（有意留在后续）
 
 - `resolvers[0].memoryLimitMb`（需 0.6.2）—— 剧集页扫描已有 500 条上限，不急。
-- `flux.fs` 写 `cookies.txt` 喂 yt-dlp —— 属于 yt-dlp 委派路径的体验优化，与 M4 主题无关。
-- `finalize` / `failed` 拦截阶段 —— 前者见上，后者（自动重试）需要先确认重试与去广告的交互。
+- ~~`flux.fs` 写 `cookies.txt` 喂 yt-dlp~~ —— **已在 3.0.0 实现**（`src/lib/ytdlp.ts`），不再是待办。
+- ~~`finalize` / `failed` 拦截阶段~~ —— `failed` 已在 3.0.0 接入；`finalize` 仍待装机实测（文档矛盾见上）。
 
 ---
 

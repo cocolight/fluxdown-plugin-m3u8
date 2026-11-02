@@ -24,7 +24,7 @@
 ## 2. 分层与依赖方向
 
 - 依赖方向单向：`src/entry/*` → `src/lib/*` → 无。`lib` 之间允许互相引用，但**不得成环**。
-- `lib` 内部分两类：纯函数（`url` / `hls` / `adrules` / `naming` / `text` / `patterns` / `probe` 的解析部分 / `failure`）与宿主调用（`http` / `request` / `install` / `handled` / `items` / `refresh`）。纯函数不得直接调 `flux.*`，宿主调用才碰。
+- `lib` 内部分两类：纯函数（`url` / `hls` / `adrules` / `naming` / `text` / `patterns` / `probe` 的解析部分 / `failure` / `ytdlp`）与宿主调用（`http` / `request` / `install` / `handled` / `items` / `refresh`）。纯函数不得直接调 `flux.*`，宿主调用才碰。
 - **运行时四个入口彼此独立**：各自编译成一个 `.js`，同一模块会在多个产物里各存一份（`adrules` 就在 resolver 与 intercept 产物里各有一份）；靠 tree-shaking 保证只带进真正用到的部分。源码侧正常 `import` 即可，不要为「省体积」写跨入口的运行时依赖 —— 那在 QuickJS 里不存在。
 - 沙箱没有 `DOM`、`URL`、`setTimeout`、`fetch`。`tsconfig.json` 的 `lib` 不含 `DOM` 是**门禁**而非习惯：`new URL` / `btoa` 在编译期即失败，网络请求只走 `flux.fetch`。
 

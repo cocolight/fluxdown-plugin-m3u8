@@ -325,6 +325,137 @@ const PAGE = `<!doctype html>
     existsSync(join(DIST, "main.js")) ? "dist/main.js 仍在" : true);
 }
 
+// ---------------------------------------------------------------------------
+// 13. yt-dlp 委派带上凭据（cookies.txt + --add-header）
+//     yt-dlp 这条路此前完全不传 Cookie，需要登录的站点在委派路径上是硬的。
+// ---------------------------------------------------------------------------
+{
+  const YT_URL = `${SITE}/watch/yt`;
+  const YT_OUT = { stdout: JSON.stringify({ title: "凭据片名", url: `${CDN}/dl/index.m3u8` }) };
+
+  const ytdlpOnce = async (settings) => {
+    const r = await runEntry(DIST, {
+      entry: "resolver",
+      settings: { targetHosts: "site.test", useYtdlp: true, ...settings },
+      routes: {},
+      ytdlp: YT_OUT,
+      invoke: (e) => e.resolve(ctxOf(YT_URL)),
+    });
+    if (r.loadError) throw new Error(r.loadError);
+    const calls = r.calls || [];
+    const w = calls.find((c) => c[0] === "fs.writeFile");
+    const rm = calls.find((c) => c[0] === "fs.remove");
+    const run = calls.find((c) => c[0] === "ytdlp.run");
+    return { r, write: w, removed: rm, args: (run && run[1]) || [] };
+  };
+
+  // --- 4a. Cookie 形态：写 cookies.txt，参数带 --cookies
+  {
+    const { r, write, removed, args } = await ytdlpOnce({ authCookie: "sid=abc; uid=9" });
+
+    check("yt-dlp 凭据：Cookie 写法会写 cookies.txt", () =>
+      write && write[1] === "cookies.txt" ? true : `实际 ${show(write)}`);
+
+    check("yt-dlp 凭据：cookies.txt 用 Tab 分隔且恰好 7 列", () => {
+      if (!write) return "没有写文件";
+      const lines = String(write[2])
+        .split("\n")
+        .filter((l) => l && l.charAt(0) !== "#");
+      if (!lines.length) return "正文里没有 cookie 行";
+      for (const l of lines) {
+        const n = l.split("\t").length;
+        if (n !== 7) return `列数 ${n} != 7：${show(l)}`;
+      }
+      return true;
+    });
+
+    check("yt-dlp 凭据：domain 带前导点且含子域", () => {
+      if (!write) return "没有写文件";
+      const line = String(write[2])
+        .split("\n")
+        .filter((l) => l && l.charAt(0) !== "#")[0] || "";
+      const f = line.split("\t");
+      return f[0] === ".site.test" && f[1] === "TRUE" ? true : `实际 ${show(f)}`;
+    });
+
+    check("yt-dlp 凭据：HTTPS 任务的 secure 列为 TRUE", () => {
+      if (!write) return "没有写文件";
+      const f = (String(write[2]).split("\n").filter((l) => l && l.charAt(0) !== "#")[0] || "").split("\t");
+      return f[3] === "TRUE" ? true : `实际 ${show(f[3])}`;
+    });
+
+    check("yt-dlp 凭据：两条 cookie 都在，值是原样", () => {
+      if (!write) return "没有写文件";
+      const body = String(write[2]);
+      return body.indexOf("\tsid\tabc") >= 0 && body.indexOf("\tuid\t9") >= 0
+        ? true
+        : `正文 ${show(body)}`;
+    });
+
+    check("yt-dlp 参数：带 --cookies cookies.txt", () =>
+      eq(args.slice(0, 2), ["--cookies", "cookies.txt"]));
+
+    check("yt-dlp 凭据：用完立刻删除 cookies.txt", () =>
+      removed && removed[1] === "cookies.txt" ? true : `实际 ${show(removed)}`);
+
+    check("yt-dlp 委派本身仍然成功", () => (r.result && r.result.url ? true : `结果 ${show(r.result)}`));
+  }
+
+  // --- 4b. HTTP 任务：secure 必须为 FALSE，否则 cookie 一条都发不出去
+  {
+    const r = await runEntry(DIST, {
+      entry: "resolver",
+      settings: { targetHosts: "site.test", useYtdlp: true, authCookie: "sid=abc" },
+      routes: {},
+      ytdlp: YT_OUT,
+      invoke: (e) => e.resolve(ctxOf("http://site.test/watch/yt")),
+    });
+    const w = (r.calls || []).find((c) => c[0] === "fs.writeFile");
+    check("yt-dlp 凭据：HTTP 任务的 secure 列为 FALSE", () => {
+      if (!w) return "没有写文件";
+      const f = (String(w[2]).split("\n").filter((l) => l && l.charAt(0) !== "#")[0] || "").split("\t");
+      return f[3] === "FALSE" ? true : `实际 ${show(f[3])}`;
+    });
+  }
+
+  // --- 4c. Bearer 形态：变不成 cookie 行，必须走 --add-header
+  {
+    const { write, args } = await ytdlpOnce({ authCookie: "bearer abc123" });
+    check("yt-dlp 凭据：Bearer 不写 cookies.txt", () => (write ? `仍写了 ${show(write[1])}` : true));
+    check("yt-dlp 凭据：Bearer 走 --add-header Authorization", () => {
+      const i = args.indexOf("--add-header");
+      if (i < 0) return `参数里没有 --add-header：${show(args)}`;
+      return args[i + 1] === "Authorization: Bearer abc123" ? true : `实际 ${show(args[i + 1])}`;
+    });
+  }
+
+  // --- 4d. 无凭据：行为与改造前完全一致（不写、不加参数）
+  {
+    const { write, args } = await ytdlpOnce({});
+    check("yt-dlp 凭据：无凭据时不写文件", () => (write ? `仍写了 ${show(write)}` : true));
+    check("yt-dlp 凭据：无凭据时参数里没有 --cookies / --add-header", () => {
+      const bad = args.filter((a) => a === "--cookies" || a === "--add-header");
+      return bad.length ? `出现了 ${show(bad)}` : true;
+    });
+    check("yt-dlp 无凭据：参数与原来一致", () =>
+      eq(args, ["-J", "--no-warnings", YT_URL]));
+  }
+
+  // --- 4e. 写文件失败不能拖垮委派
+  {
+    const r = await runEntry(DIST, {
+      entry: "resolver",
+      settings: { targetHosts: "site.test", useYtdlp: true, authCookie: "sid=abc" },
+      routes: {},
+      ytdlp: YT_OUT,
+      fsWriteError: "ENOSPC",
+      invoke: (e) => e.resolve(ctxOf(YT_URL)),
+    });
+    check("yt-dlp 凭据：写 cookies.txt 失败仍继续委派", () =>
+      r.result && r.result.url ? true : `结果 ${show(r.result)} / 错误 ${show(r.error)}`);
+  }
+}
+
 console.log(`\n${pass}/${pass + fail} 项契约通过`);
 if (fail) {
   console.error(`\n${fail} 项契约未通过 —— 请求面行为不符合预期。`);

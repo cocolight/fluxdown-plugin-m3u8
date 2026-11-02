@@ -16,6 +16,8 @@
 
 ### Added
 
+- yt-dlp 委派带上登录凭据：Cookie 写 `cookies.txt` 走 `--cookies`，`Authorization` 等头走 `--add-header`
+- 新增 `src/lib/ytdlp.ts`：凭据 → yt-dlp 参数的适配（Cookie 与请求头分两路，用完即删临时文件）
 - 拦截器新增 `failed` 阶段：按失败类型决定是否重试，只对瞬时网络错误与 5xx 重试，认证 / 404 / 磁盘 / 解密 / 取消一律不接管
 - 拦截器新增 `refresh` 阶段：401/403/410 时重新访问任务地址取新 Cookie 并合并下发，最多换发一次
 - 新增 `src/lib/failure.ts`（失败归因）与 `src/lib/refresh.ts`（凭据换发）
@@ -25,6 +27,7 @@
 
 ### Changed
 
+- 请求面契约 32 → 47 项：新增 yt-dlp 凭据 15 项（7 列格式、secure 位随 scheme、Bearer 走头、无凭据零改动、写失败降级）
 - `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
 - 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
 - 拦截器契约 33 → 72 项：新增 `failed` 23 项、`refresh` 12 项

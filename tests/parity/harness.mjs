@@ -74,9 +74,15 @@ export function createFlux(sc) {
       },
     },
     fs: {
-      writeFile: async (n) => calls.push(["fs.writeFile", n]),
+      // 记录正文：yt-dlp 的 cookies.txt 内容本身就是要断言的对象（7 列、secure 位、
+      // 用完即删）。只记文件名的话，凭据写错了测试也发现不了。
+      writeFile: async (n, c) => {
+        calls.push(["fs.writeFile", n, c]);
+        // `fsWriteError` 模拟磁盘满/只读：插件必须降级为「不带凭据继续跑」而非整个委派失败。
+        if (sc.fsWriteError) throw new Error(sc.fsWriteError);
+      },
       readFile: async () => null,
-      remove: async () => undefined,
+      remove: async (n) => calls.push(["fs.remove", n]),
       list: async () => [],
     },
     info: { identity: "m3u8-resolver@cocolight", version: "1.8.0", appVersion: "0.6.5" },
