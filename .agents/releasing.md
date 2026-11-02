@@ -46,7 +46,7 @@
    ```
 
 6. **建 Release**：title 填 `vX.Y.Z`（与 tag 一致）；正文直接取自 `CHANGELOG.md` 的 `[X.Y.Z]` 节，不要另写一套。
-7. **附发布包**：`npm run pack` 产出 `fluxdown-plugin-m3u8_<版本>.fxplug`，上传为该 Release 的附件。附件名与版本号一致，不要手工改名。
+7. **附发布包**：`npm run pack` 产出 `m3u8-resolver@cocolight-<版本>.fxplug`（按 manifest 的 identity 与版本命名），上传为该 Release 的附件。附件名与版本号一致，不要手工改名（预发布唯一例外见 §5）。
 8. **收尾核对**：Release 页面正常、tag 指向的 commit 就是刚合入 `master` 的那个 commit、附件可下载且 `identity` 未变。
 
 ## 4. 常见错误
