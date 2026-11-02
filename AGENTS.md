@@ -40,7 +40,7 @@ fluxdown-plugin-m3u8 是 FluxDown 下载器的 HLS/DASH 发现与变体解析插
 |------|------|
 | 安装依赖 | `npm ci` |
 | 运行（装机） | `npm run build`，然后在 FluxDown「设置 → 扩展 → 插件 → 从目录安装」选 `dist/` |
-| 测试 | `npm test`（parity + contract + intercept + postprocess + subscribe + ui 串联） |
+| 测试 | `npm test`（parity + contract + intercept + postprocess + subscribe + ui 串联；各层断言什么见 `CONTRIBUTING.md`「本地检查」） |
 | Lint | `npm run typecheck`（`tsc --noEmit`，兼类型检查与静态检查） |
 | 格式化检查 | 无独立工具；行尾空白与冲突标记由 `./scripts/check-fast.sh` 断言（理由见 §4 第 11 条） |
 | 快速门禁（提交前与 CI 同跑，无需填写） | `./scripts/check-fast.sh` |

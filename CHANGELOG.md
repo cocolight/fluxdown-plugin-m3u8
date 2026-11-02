@@ -21,6 +21,10 @@
 
 ### Changed
 
+- 六层测试的断言维度收口到 `CONTRIBUTING.md`：README 与 `AGENTS.md` §2 不再各自复述 `npm run <层>`，只留入口与分层口径
+- README「开发约定」并入 `CONTRIBUTING.md`：分支、钩子、ROADMAP/CHANGELOG 要求与文档落点原属重复项，README 只留指路
+- README 清理陈旧内容：删除「已停用：本地源头去广告」整节、v1.8.0 源码目录叙事与 2.1.0 升级提示
+- README 事实校正：fixture 数 67 → 53，凭据同源口径改为「与任务地址同源」，升级注意事项改为 3.0.0 的两项影响（凭据重填、重新授权）
 - 文档去 AI 味改写：README 重排结构、长句拆短，全仓文档破折号插入语清零（40 → 0 处）
 - 建立 `docs/settings.md` 与 `README.md` 的括号嵌套上限，超长表格行外的段落一律拆句
 
