@@ -153,6 +153,97 @@ const PAGE = `<!doctype html>
 }
 
 // ---------------------------------------------------------------------------
+// 2b. 凭据的站点约束（`@站点` 行）
+//
+// 没有这一节，`site !== key` 那条同源闸是恒真的 —— `site` 本身就是任务 URL 的 origin。
+// 也就是说「跨源不注入」只挡得住清单↔CDN，挡不住「换一个站也能拿到凭据」。
+// ---------------------------------------------------------------------------
+{
+  // 两个任务地址都要能抓到清单：SITE 用 http（验证协议不符），其余用 https
+  const SITE_ROUTES = {
+    [`${CDN}/hls/master.m3u8`]: { body: MASTER },
+    [`${SITE}/hls/master.m3u8`]: { body: MASTER },
+    ["http://site.test/hls/master.m3u8"]: { body: MASTER },
+  };
+  const withSite = (raw, taskUrl) =>
+    resolveOnce({
+      settings: { authCookie: raw },
+      routes: SITE_ROUTES,
+      invoke: (e) => e.resolve(ctxOf(taskUrl)),
+    });
+
+  // ① 命中：不改变原有行为
+  {
+    const r = await withSite("@site.test\nsid=abc", `https://site.test/hls/master.m3u8`);
+    const oh = (r.result.request && r.result.request.originHeaders) || [];
+    const h = (oh[0] && oh[0].headers) || {};
+    check("站点约束：@site.test 命中同站任务，正常注入 Cookie", () =>
+      h.Cookie === "sid=abc" ? true : `实际 ${show(h)}`);
+  }
+
+  // ② 不命中：整条不注入，且凭据不出现在返回值里。
+  //    这里故意用 `other.test` 而不是 `cdn.site.test` —— 后者是 site.test 的子域，
+  //    按主机名匹配本来就该命中（见 ③），拿它当反例会把正确行为判成 bug。
+  {
+    const OTHER = "https://other.test/hls/master.m3u8";
+    const r = await resolveOnce({
+      settings: { authCookie: "@site.test\nsid=abc" },
+      routes: { ...SITE_ROUTES, [OTHER]: { body: MASTER } },
+      invoke: (e) => e.resolve(ctxOf(OTHER)),
+    });
+    const oh = r.result.request && r.result.request.originHeaders;
+    check("站点约束：@site.test 遇到无关站点，不生成 originHeaders", () =>
+      oh === undefined ? true : `仍生成 ${show(oh)}`);
+    check("站点约束：被挡下时凭据不出现在返回值里", () => {
+      const dump = JSON.stringify(r.result);
+      return dump.indexOf("sid=abc") === -1 ? true : "凭据泄漏进了返回值";
+    });
+  }
+
+  // ③ 子域匹配：@site.test 应覆盖 cdn.site.test
+  {
+    const r = await withSite("@site.test\nsid=abc", `${CDN}/hls/master.m3u8`);
+    const oh = (r.result.request && r.result.request.originHeaders) || [];
+    check("站点约束：@site.test 覆盖子域 cdn.site.test", () =>
+      oh.length === 1 ? true : `实际 ${show(oh)}`);
+  }
+
+  // ④ 带协议的约束卡到 origin：http 任务拿不到 https 的凭据
+  {
+    const r = await withSite("@https://site.test\nsid=abc", `http://site.test/hls/master.m3u8`);
+    const oh = r.result.request && r.result.request.originHeaders;
+    check("站点约束：@https://site.test 不覆盖 http 任务（协议不同即不同站点）", () =>
+      oh === undefined ? true : `仍生成 ${show(oh)}`);
+  }
+
+  // ⑤ 通配只匹配真子域，不匹配裸域
+  {
+    const r = await withSite("@*.site.test\nsid=abc", `https://site.test/hls/master.m3u8`);
+    const oh = r.result.request && r.result.request.originHeaders;
+    check("站点约束：@*.site.test 不匹配裸域 site.test", () =>
+      oh === undefined ? true : `仍生成 ${show(oh)}`);
+  }
+
+  // ⑥ 向后兼容：不写站点行时行为完全不变（旧配置不受影响）
+  {
+    const r = await withSite("sid=abc", `${CDN}/hls/master.m3u8`);
+    const oh = (r.result.request && r.result.request.originHeaders) || [];
+    check("站点约束：不写 @站点 时行为不变（旧配置不受影响）", () =>
+      oh.length === 1 ? true : `实际 ${show(oh)}`);
+  }
+
+  // ⑦ 站点行不会被当成 Cookie 发出去
+  {
+    const r = await withSite("@site.test\nsid=abc", `https://site.test/hls/master.m3u8`);
+    const oh = (r.result.request && r.result.request.originHeaders) || [];
+    const h = (oh[0] && oh[0].headers) || {};
+    check("站点约束：@站点 行不进 Cookie 值", () =>
+      String(h.Cookie || "").indexOf("@") === -1 ? true : `Cookie 里混进了站点行：${show(h.Cookie)}`);
+  }
+
+}
+
+// ---------------------------------------------------------------------------
 // 3. Basic + 非 ASCII 用户名
 // ---------------------------------------------------------------------------
 {
@@ -399,6 +490,22 @@ const PAGE = `<!doctype html>
       removed && removed[1] === "cookies.txt" ? true : `实际 ${show(removed)}`);
 
     check("yt-dlp 委派本身仍然成功", () => (r.result && r.result.url ? true : `结果 ${show(r.result)}`));
+  }
+
+  // --- 4a2. 站点约束同样管住 yt-dlp 链路
+  //
+  // 三条注入链路（抓清单 / 下载补丁 / yt-dlp）共用 `parseCredential` 里的那一处判断。
+  // 这条用例是「不漏一条链路」的守门人：谁把站点检查挪到某个调用点上，这里会先红。
+  {
+    const { write, args, r } = await ytdlpOnce({ authCookie: "@other.test\nsid=abc" });
+    check("站点约束（yt-dlp）：站点不匹配时不写 cookies.txt", () =>
+      write ? `仍写了 ${show(write)}` : true);
+    check("站点约束（yt-dlp）：站点不匹配时不带 --cookies / --add-header", () => {
+      const bad = args.filter((a) => a === "--cookies" || a === "--add-header");
+      return bad.length ? `仍带了 ${show(bad)}` : true;
+    });
+    check("站点约束（yt-dlp）：不匹配时委派仍然成功（fail-open，只是不带凭据）", () =>
+      r.result && r.result.url ? true : `结果 ${show(r.result)}`);
   }
 
   // --- 4b. HTTP 任务：secure 必须为 FALSE，否则 cookie 一条都发不出去

@@ -24,12 +24,14 @@
 - 新增 `src/lib/task.ts`：拦截器侧的极简任务形状，让 lib 层不必依赖 SDK 的完整类型
 - 订阅 provider 支持防抓页解锁：遇「安全检查」页时解出 Cookie 并对同一地址重取一次（此前只会解析出空 feed，用户看不出是被拦了）
 - 新增 `tests/subscribe.mjs`：订阅契约 14 项（解锁只重取一次、不循环、订阅源 Cookie/UA 不丢且合并而非覆盖）
+- `authCookie` 支持首行 `@站点` 声明归属：声明后凭据只发给该站点，可写裸域 / `*.子域` / 精确 origin / 逗号分隔多个（理由：同源闸两侧同取任务 URL，恒真等于无约束，见 ADR-0010）
 
 ### Changed
 
 - 去广告的 CUE 块边界改用 `CUE-OUT:DURATION` 交叉判定：`CUE-IN` 挂正片首段的流不再误删一个正片分片
 - 拦截器契约 72 → 74 项：新增「IN 挂广告末段」「IN 挂正片首段」两条 CUE 边界用例
 - 请求面契约 32 → 47 项：新增 yt-dlp 凭据 15 项（7 列格式、secure 位随 scheme、Bearer 走头、无凭据零改动、写失败降级）
+- 请求面契约 47 → 58 项：新增凭据站点约束 11 项（四种写法 × 命中/不命中、无 `@` 行兼容、yt-dlp 链路守门）
 - `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
 - 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
 - 拦截器契约 33 → 72 项：新增 `failed` 23 项、`refresh` 12 项
@@ -39,7 +41,8 @@
 - README 事实校正：fixture 数 67 → 53，凭据同源口径改为「与任务地址同源」，升级注意事项改为 3.0.0 的两项影响（凭据重填、重新授权）
 - 文档去 AI 味改写：README 重排结构、长句拆短，全仓文档破折号插入语清零（40 → 0 处）
 - 文档补记 9 项装机实测结论：`recordArtifact` 允许主干后缀、重复登记幂等、`flux.fs` 根非下载目录（理由：均为源码或探针确证，且影响后续设计取舍）
-- `.agents/sdk-migration.md` 补记 `authCookie` 无站点绑定的风险：同源闸防住 CDN，但跨站点取凭据全靠用户自律（理由：ADR-0006 只写了凭据失效，未写失去站点绑定）
+- 凭据站点判断下沉到 `parseCredential()`：抓清单、下载补丁、yt-dlp 委派三条链路共用一个收口点，避免逐点加判断漏掉一条
+- 「复制取 Cookie 脚本」按钮改为输出带 `@站点` 行，用户复制即得带约束的凭据
 - 建立 `docs/settings.md` 与 `README.md` 的括号嵌套上限，超长表格行外的段落一律拆句
 
 ### Fixed

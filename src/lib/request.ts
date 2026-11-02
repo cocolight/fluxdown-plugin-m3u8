@@ -94,7 +94,15 @@ export function credentialOrigin(
     return null;
   }
 
+  // 站点约束由 `parseCredential` 统一执行（三条注入链路共用一处判断），这里只取结果。
+  // 注意 `parseCredential` 返回 null 有两种原因：格式不可解析，或站点约束不命中。
+  // 同源闸已经通过的前提下基本只剩后者，所以日志按「被站点约束挡下」记。
   const cred = parseCredential(text, site);
+  if (!cred && !quiet) {
+    flux.logger.info(
+      "[m3u8-resolver] 登录凭据未能用于 " + site + "（已限定站点或内容为空），未注入",
+    );
+  }
   return cred ? { origin: cred.origin, headers: cred.headers } : null;
 }
 
