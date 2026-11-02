@@ -12,7 +12,7 @@
 | 4 | 后处理与产物登记（M4） | - | done | 3 | `npm run postprocess` 31 项全绿；parity 63/67 + 4 项 `diverges` 声明；`npm run validate` 通过 |
 | 5 | 工程规范改造：AI 协作骨架、四层门禁、文档分层 | - | done | 4 | `./scripts/check-fast.sh` 通过；`AGENTS.md` ≤200 行；`.agents/` 下每篇 `.md` 均在 `AGENTS.md` §1 路由表；`docs/` 只剩使用者文档 |
 | 6 | 设置页视图（M5）：`main` + `contributes.views` 做去广告规则编辑 | - | done | 4 | 视图在桌面与 Web 均渲染；`npm run validate` 风险等级仍为 `elevated`（未引入 `desktop` 权限） |
-| 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 3 项 | - | in_progress | 3 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
+| 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 15 项结案，剩 3 项缺测试源转第 13 行 | - | done | 3 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
 | 13 | 装机实测缺测试源的 3 项：#4 手选变体、#13 丢分片续传、#17 `maxRangeBytes`+`ephemeral` | - | planned | 7 | 三项各自在真机上跑出结论并写进 `.agents/sdk-migration.md` 第九节 |
 | 14 | 插件设置页签分流：站点生效范围、开关项、去广告三项进「插件设置」，其余参数留在「基础设置」 | - | planned | 12 | `npm run ui` 断言字段分区与顺序；`contract` 断言存在 `settings` 位置视图；桌面端两页签可切换且各自保存 |
 | 15 | 凭据站点约束收紧：裸域改精确匹配 + 缺省继承 `targetHosts` | - | done | 5 | ADR-0011；`contract` 65 项；真机 A/B 确认子域不再拿到 Cookie |
