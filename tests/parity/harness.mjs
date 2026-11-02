@@ -124,7 +124,9 @@ export function createFlux(sc) {
           code: sc.ffmpeg.code ?? 0,
           stdout: "",
           stderr: sc.ffmpeg.stderr ?? "",
-          timedOut: false,
+          // 透传：超时返回 code=-1 + timedOut=true（宿主口径）。写死 false 会让「超时分支」
+          // 永远测不到 —— 这个盲区已经让一次日志改动假绿过。
+          timedOut: !!sc.ffmpeg.timedOut,
           truncatedStdout: false,
           truncatedStderr: false,
         };
