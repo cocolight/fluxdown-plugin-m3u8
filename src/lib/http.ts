@@ -82,7 +82,7 @@ export function credentialFor(env: Env, targetUrl: string): Record<string, strin
   const site = safeOrigin(env.ctx.url);
   const target = safeOrigin(targetUrl);
   if (!site || !target || site !== target) return null;
-  const cred = parseCredential(raw, site);
+  const cred = parseCredential(raw, site, env.s.targetHosts);
   // 站点约束由 `parseCredential` 统一执行（与下载补丁、yt-dlp 共用一处判断）。
   // 抓取链路不能绕开它：否则「限定站点」只在下载时生效，抓清单那一步仍会把 Cookie 发出去。
   return cred ? cred.headers : null;

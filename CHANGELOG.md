@@ -32,6 +32,13 @@
 - 拦截器契约 72 → 74 项：新增「IN 挂广告末段」「IN 挂正片首段」两条 CUE 边界用例
 - 请求面契约 32 → 47 项：新增 yt-dlp 凭据 15 项（7 列格式、secure 位随 scheme、Bearer 走头、无凭据零改动、写失败降级）
 - 请求面契约 47 → 58 项：新增凭据站点约束 11 项（四种写法 × 命中/不命中、无 `@` 行兼容、yt-dlp 链路守门）
+- 请求面契约 58 → 65 项：新增 `targetHosts` 继承 4 项、`@*.` 正面 1 项、优先级 2 项
+- 凭据的 `@a.com` 改为**只匹配 `a.com` 本身**，含子域须显式写 `@*.a.com`（理由：凭据是限制不是白名单，扩到 `evil.a.com` 即泄漏，见 ADR-0011）
+- 凭据没写 `@站点` 时改为继承 `targetHosts`，该清单留空才真正不限站点（理由：用户已在同一张表单里表达过站点意图，再抄一遍只会漏抄）
+- 新增 `src/lib/site.ts`：`targetHosts` 的解析与命中判断，resolver 与凭据缺省约束共用一份
+- `credentialOrigin()` / `ytdlpArgsFromCredential()` / `credentialFor()` 增加 `targetHosts` 参数并透传到 `parseCredential()`
+- 设置表单重排：站点两项（生效范围 / 登录凭据）提到最前，去广告两项紧随开关段（理由：站点决定「在哪些站生效、用什么身份」，是配置的第一步）
+- 设置表单契约 19 → 21 项：新增「站点两项排最前」「去广告紧随开关段」两条顺序断言
 - `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
 - 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
 - 拦截器契约 33 → 72 项：新增 `failed` 23 项、`refresh` 12 项
@@ -55,6 +62,7 @@
 - `hooks` 的 ffmpeg 失败日志区分超时：超时单独提示「默认 5 分钟上限、产物可能是不完整的半成品」，不再只报 `code -1`
 - `tests/parity/harness.mjs` 的 `ffmpeg.run` 开始透传 `timedOut`（此前写死 `false`，超时分支从未被覆盖）
 - 新增 `tests/postprocess.mjs` 两组用例：超时日志文案、超时不登记产物（36 项）
+- `targetHosts` 补上 `"default": ""`：此前缺该键，运行时取到 `null`，`str()` 变字符串 `"null"` 被当成主机名，所有播放页都不处理（理由：宿主表单回显空串，界面看不出异常）
 
 ## [3.0.0-rc1] - 2026-11-02
 

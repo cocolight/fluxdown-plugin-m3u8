@@ -22,4 +22,5 @@
 | [0007](0007-two-tier-settings-view.md) | 设置页分「常用 / 专业」两档，`expertMode` 控制展开 | 已被 0008 取代 |
 | [0008](0008-three-tab-settings-view.md) | 设置页改三个页签（基础 / 参数 / 去广告），去掉 `expertMode` | 已被 0009 取代 |
 | [0009](0009-settings-host-form-only.md) | 设置面收敛为宿主表单，删除自定义视图 | 已接受 |
-| [0010](0010-credential-site-scope.md) | 凭据自带站点约束，判断下沉到解析层 | 已接受（修订 0006） |
+| [0010](0010-credential-site-scope.md) | 凭据自带站点约束，判断下沉到解析层 | 已接受（修订 0006；0011 修订其第 1 条） |
+| [0011](0011-credential-site-exact-match.md) | 凭据站点约束的裸域改为精确匹配，缺省继承 `targetHosts` | 已接受 |

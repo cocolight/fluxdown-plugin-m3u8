@@ -54,6 +54,24 @@
   },
   "settings": [
     {
+      "key": "targetHosts",
+      "title": "站点 · 生效范围",
+      "description": "逗号分隔的主机名，填主域即覆盖其子域；留空 = 对所有站点生效。凭据没写 @站点 时也以本清单为默认范围。",
+      "type": "string",
+      "widget": "text",
+      "default": ""
+    },
+    {
+      "key": "authCookie",
+      "title": "站点 · 登录凭据",
+      "description": "只发给同一站点的请求。首行可写 @站点 限定范围（@a.com 只匹配 a.com 本身，含子域请写 @*.a.com），不写则用「站点 · 生效范围」的清单。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
+      "type": "string",
+      "widget": "textarea",
+      "default": "",
+      "helperScript": "copy('@'+location.hostname+'\\n'+document.cookie)",
+      "helperLabel": "复制取 Cookie 的脚本"
+    },
+    {
       "key": "solveChallenge",
       "title": "自动过「安全检查」页",
       "description": "遇到防抓页时解出 Cookie 并对同一地址重试一次。",
@@ -129,6 +147,36 @@
       "description": "跳过元数据探测直接下载，适合会过期的直链。",
       "type": "boolean",
       "default": "false"
+    },
+    {
+      "key": "adRulesMode",
+      "title": "去广告 · 模式",
+      "description": "下载前丢弃广告分片。只对本插件解析出来的任务生效。",
+      "type": "string",
+      "widget": "select",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭（默认）"
+        },
+        {
+          "value": "marker",
+          "label": "仅按广告标记（保守）"
+        },
+        {
+          "value": "heuristic",
+          "label": "标记 + 推测（激进）"
+        }
+      ],
+      "default": "off"
+    },
+    {
+      "key": "adRulesExtra",
+      "title": "去广告 · 自定义规则",
+      "description": "JSON，可留空。三个键 keepPath / dropPath / dropHosts，例 {\"dropPath\":[\"/ads/\",\"/preroll/\"]}。一般留空，模式选「标记 + 推测」即可。",
+      "type": "string",
+      "widget": "textarea",
+      "default": ""
     },
     {
       "key": "preferResolution",
@@ -229,23 +277,6 @@
       "default": "{title} {host}"
     },
     {
-      "key": "targetHosts",
-      "title": "站点 · 生效范围",
-      "description": "逗号分隔的主机名；留空 = 对所有站点生效。",
-      "type": "string",
-      "widget": "text"
-    },
-    {
-      "key": "authCookie",
-      "title": "站点 · 登录凭据",
-      "description": "只发给同一站点的请求。首行可写 @站点 限定范围（如 @a.com），不写则对所有站点生效。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
-      "type": "string",
-      "widget": "textarea",
-      "default": "",
-      "helperScript": "copy('@'+location.hostname+'\\n'+document.cookie)",
-      "helperLabel": "复制取 Cookie 的脚本"
-    },
-    {
       "key": "userAgent",
       "title": "网络 · User-Agent",
       "description": "留空用 FluxDown 默认。部分站点按 UA 返回不同清晰度。",
@@ -308,36 +339,6 @@
       "default": "0",
       "min": 0,
       "max": 65536
-    },
-    {
-      "key": "adRulesMode",
-      "title": "去广告 · 模式",
-      "description": "下载前丢弃广告分片。只对本插件解析出来的任务生效。",
-      "type": "string",
-      "widget": "select",
-      "options": [
-        {
-          "value": "off",
-          "label": "关闭（默认）"
-        },
-        {
-          "value": "marker",
-          "label": "仅按广告标记（保守）"
-        },
-        {
-          "value": "heuristic",
-          "label": "标记 + 推测（激进）"
-        }
-      ],
-      "default": "off"
-    },
-    {
-      "key": "adRulesExtra",
-      "title": "去广告 · 自定义规则",
-      "description": "JSON，可留空。三个键 keepPath / dropPath / dropHosts，例 {\"dropPath\":[\"/ads/\",\"/preroll/\"]}。一般留空，模式选「标记 + 推测」即可。",
-      "type": "string",
-      "widget": "textarea",
-      "default": ""
     }
   ]
 }

@@ -65,6 +65,10 @@ function takeCI(h: Record<string, string>, name: string): string | undefined {
  * 凭据该去的地方。目标与它不同源时**整条不注入**并记日志：清单在站内、分片在 CDN 的常见
  * 形态下，Cookie 不会跟着发给 CDN。
  *
+ * 「哪些站点能用这份凭据」另由 `parseCredential` 判断：凭据首行写了 `@站点` 就用它，
+ * 没写则继承 `targetHosts`。`targetHosts` 必须从这里传下去 —— 下载补丁这条链路拿不到
+ * 设置上下文。
+ *
  * `siteUrl` 显式传入而不是从 `env.ctx` 取，是因为 `refresh` 阶段也要复用这套逻辑，而那时
  * 手上只有 `task.sourceUrl`（任务原始地址）、没有 resolver 的 `ctx`。两处语义相同，共用
  * 一份实现才能保证「同一站点算出的凭据一定一样」。
@@ -73,6 +77,7 @@ export function credentialOrigin(
   raw: string,
   siteUrl: string,
   targetUrl: string,
+  targetHosts?: string,
   quiet?: boolean,
 ): OriginHeaders | null {
   const text = raw === null || raw === undefined ? "" : String(raw).trim();
@@ -97,7 +102,7 @@ export function credentialOrigin(
   // 站点约束由 `parseCredential` 统一执行（三条注入链路共用一处判断），这里只取结果。
   // 注意 `parseCredential` 返回 null 有两种原因：格式不可解析，或站点约束不命中。
   // 同源闸已经通过的前提下基本只剩后者，所以日志按「被站点约束挡下」记。
-  const cred = parseCredential(text, site);
+  const cred = parseCredential(text, site, targetHosts);
   if (!cred && !quiet) {
     flux.logger.info(
       "[m3u8-resolver] 登录凭据未能用于 " + site + "（已限定站点或内容为空），未注入",
@@ -149,7 +154,7 @@ export async function requestPatch(env: Env, targetUrl: string): Promise<Request
   if (origin) merged["Origin"] = origin;
 
   // 5) 凭据：同源才注入，且不覆盖用户显式写的同名头
-  const cred = credentialOrigin(s.authCookie, ctx.url, targetUrl);
+  const cred = credentialOrigin(s.authCookie, ctx.url, targetUrl, s.targetHosts);
   if (cred) {
     const keep: Record<string, string> = {};
     for (const k in cred.headers) {

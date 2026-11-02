@@ -118,9 +118,10 @@ export function toNetscapeCookies(
 export function ytdlpArgsFromCredential(
   raw: string | null | undefined,
   origin: string,
+  targetHosts?: string | null,
 ): { cookie: string; addHeaders: string[] } {
   const empty = { cookie: "", addHeaders: [] as string[] };
-  const cred = parseCredential(raw, origin);
+  const cred = parseCredential(raw, origin, targetHosts);
   if (!cred) return empty;
 
   const addHeaders: string[] = [];
