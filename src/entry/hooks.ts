@@ -33,6 +33,29 @@ function baseName(p: string | null | undefined): string {
   return String(p || "").split(/[\\/]/).pop() || "";
 }
 
+/**
+ * ffmpeg 失败的日志文案。
+ *
+ * 为什么要区分超时：`flux.ffmpeg.run` 的默认 `timeoutMs` 是 5 分钟，超时返回的
+ * `code` 是 `-1`（与「进程被杀死」共用一个哨兵值）。此时 ffmpeg 多半已经写出一个**半截**
+ * 的 .mp4（`-y` 会先创建文件再填充），而调用方不清理它。只说「失败 (code -1)」用户无从判断，
+ * 于是这里明确告诉他产物可能不完整、该删掉重来。
+ *
+ * 另外 `-c copy` 成功时也可能只写出容器外壳（源时间戳断裂是 HLS 合并产物的常见状态），
+ * 故把 stderr 尾部一并带上，便于用户/我们判断是超时还是源本身有问题。
+ */
+function ffmpegFailLog(what: string, out: string, r: { code: number; timedOut?: boolean; stderr?: string }): void {
+  const tail = String((r && r.stderr) || "").slice(-400);
+  if (r && r.timedOut) {
+    flux.logger.error(
+      "[m3u8-resolver] " + what + "超时被终止（默认 5 分钟上限）：" + out + " 可能是不完整的半成品，建议删除后重试",
+      tail,
+    );
+    return;
+  }
+  flux.logger.error("[m3u8-resolver] " + what + "失败 (code " + String(r && r.code) + "):", tail);
+}
+
 type DoneEvent = Extract<FluxEvent, { event: "done" }>;
 type ErrorEvent = Extract<FluxEvent, { event: "error" }>;
 type CancelEvent = Extract<FluxEvent, { event: "cancel" }>;
@@ -137,7 +160,7 @@ async function onDone(ev: DoneEvent): Promise<void> {
             await registerArtifact(out);
             return; // 已产出 mp4，不再走下面的转封装
           }
-          flux.logger.error("[m3u8-resolver] 兜底合并失败 (code " + r.code + "):", (r.stderr || "").slice(-400));
+          ffmpegFailLog("兜底合并", out, r);
         }
       }
     }
@@ -169,7 +192,7 @@ async function onDone(ev: DoneEvent): Promise<void> {
       args: ["-i", "./" + video, "-c", "copy", "-movflags", "+faststart", "-y", "./" + out],
     });
     if (r.code !== 0) {
-      flux.logger.error("[m3u8-resolver] remux 失败 (code " + r.code + "):", (r.stderr || "").slice(-400));
+      ffmpegFailLog("remux", out, r);
     } else {
       flux.logger.info("[m3u8-resolver] remux 完成:", out);
       await registerArtifact(out);

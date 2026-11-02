@@ -237,6 +237,24 @@ for (const [label, fp] of [
   });
 }
 
+// ---------------------------------------------------------------------------
+// 7. 失败可辨识：超时与普通失败必须区分（超时留下的半成品要能被认出来）
+// ---------------------------------------------------------------------------
+{
+  // 超时：`flux.ffmpeg.run` 以 timedOut=true + code=-1 返回，此时 -y 已创建出半截 .mp4
+  const r = await runDone({ ffprobe: P_TS, file: "/dl/show.ts", ffmpeg: { code: -1, timedOut: true } });
+  await ck("失败：超时日志点明「5 分钟上限」而不是只给 code -1", () => anyLog(r, "超时被终止"));
+  await ck("失败：超时日志提醒产物可能不完整（用户才知道要删掉重来）", () => anyLog(r, "不完整"));
+  await ck("失败：超时不登记产物", () => eq(artifacts(r), []));
+}
+
+{
+  const r = await runDone({ ffprobe: P_TS, file: "/dl/show.ts", ffmpeg: { code: 1, stderr: "boom" } });
+  await ck("失败：普通非零退出仍报 code 与 stderr 尾部", () => anyLog(r, "失败 (code 1)") && anyLog(r, "boom"));
+  await ck("失败：普通失败不套用超时文案", () =>
+    anyLog(r, "超时被终止") ? "非超时失败却打了超时日志" : true);
+}
+
 console.log(`\n${pass}/${pass + fail} 项后处理契约通过`);
 if (fail) {
   console.error(`\n${fail} 项契约未通过 —— M4 的后处理行为不符合预期。`);

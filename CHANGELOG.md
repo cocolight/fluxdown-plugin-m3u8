@@ -17,6 +17,9 @@
 ### Fixed
 
 - `releasing.md` 更正 `npm run pack` 产物名的描述：实际为 `m3u8-resolver@cocolight-<版本>.fxplug`，非 `fluxdown-plugin-m3u8_<版本>.fxplug`
+- `hooks` 的 ffmpeg 失败日志区分超时：超时单独提示「默认 5 分钟上限、产物可能是不完整的半成品」，不再只报 `code -1`
+- `tests/parity/harness.mjs` 的 `ffmpeg.run` 开始透传 `timedOut`（此前写死 `false`，超时分支从未被覆盖）
+- 新增 `tests/postprocess.mjs` 两组用例：超时日志文案、超时不登记产物（36 项）
 
 ## [3.0.0-rc1] - 2026-11-02
 
