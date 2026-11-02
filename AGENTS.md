@@ -26,6 +26,7 @@ fluxdown-plugin-m3u8 是 FluxDown 下载器的 HLS/DASH 发现与变体解析插
 | 确认当前任务与验收标准 | `ROADMAP.md` |
 | 改动涉及既有架构取舍 | `.agents/adr/`（先读索引） |
 | 加或改 AI skill | `.agents/skills/README.md` |
+| 要在真机上验证引擎行为（文档没说清 / 说法矛盾） | `.agents/skills/plugin-runtime-probe/SKILL.md` |
 | 安装、运行、给使用者的说明 | `README.md`、`docs/settings.md` |
 
 > 事实以源码为准：用 `read` 看结构、`grep` 查事实，文档只给坐标。

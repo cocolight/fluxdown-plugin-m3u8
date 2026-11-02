@@ -13,6 +13,8 @@
 | 5 | 工程规范改造：AI 协作骨架、四层门禁、文档分层 | - | done | 4 | `./scripts/check-fast.sh` 通过；`AGENTS.md` ≤200 行；`.agents/` 下每篇 `.md` 均在 `AGENTS.md` §1 路由表；`docs/` 只剩使用者文档 |
 | 6 | 设置页视图（M5）：`main` + `contributes.views` 做去广告规则编辑 | - | done | 4 | 视图在桌面与 Web 均渲染；`npm run validate` 风险等级仍为 `elevated`（未引入 `desktop` 权限） |
 | 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 3 项 | - | in_progress | 3 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
+| 13 | 装机实测缺测试源的 3 项：#4 手选变体、#13 丢分片续传、#17 `maxRangeBytes`+`ephemeral` | - | planned | 7 | 三项各自在真机上跑出结论并写进 `.agents/sdk-migration.md` 第九节 |
+| 14 | 插件设置页签分流：站点生效范围、开关项、去广告三项进「插件设置」，其余参数留在「基础设置」 | - | planned | 12 | `npm run ui` 断言字段分区与顺序；`contract` 断言存在 `settings` 位置视图；桌面端两页签可切换且各自保存 |
 | 8 | 字幕下载 / 封装 | - | dropped | - | 判定依据：resolver 返回值无字幕字段，插件亦不能写入下载目录（见 `.agents/capability-matrix.md` §4） |
 | 9 | 移除登录入口，凭据改由设置项 `authCookie` 直供（v3.0.0） | - | done | 6 | `contract` 断言 manifest 无 `auth` 段/无 `auth` 权限/产物无 `auth.js`；`npm test` 五层全绿 |
 | 10 | 设置页改为「大众 / 专业」两档视图 | - | done | 9 | `expertMode` 默认关时只显示 12 项常用设置；`npm run ui` 断言两档渲染与切换 |
