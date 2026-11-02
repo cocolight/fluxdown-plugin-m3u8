@@ -27,6 +27,8 @@
 
 ### Changed
 
+- 去广告的 CUE 块边界改用 `CUE-OUT:DURATION` 交叉判定：`CUE-IN` 挂正片首段的流不再误删一个正片分片
+- 拦截器契约 72 → 74 项：新增「IN 挂广告末段」「IN 挂正片首段」两条 CUE 边界用例
 - 请求面契约 32 → 47 项：新增 yt-dlp 凭据 15 项（7 列格式、secure 位随 scheme、Bearer 走头、无凭据零改动、写失败降级）
 - `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
 - 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
