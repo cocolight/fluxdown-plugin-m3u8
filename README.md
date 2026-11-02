@@ -19,15 +19,15 @@
 ### 请求
 
 - **鉴权头自动注入**：`Referer` 优先使用任务携带的播放页完整 URL，另注入 `Origin`、自定义 `User-Agent` 与任意自定义请求头。抓 playlist 与抓分片用同一套头。
-- **登录凭据**：需要登录才能取到 m3u8 的站点，把 Cookie、`bearer:` 令牌、`basic:用户名:密码` 或多行请求头粘到插件设置。凭据只附加到与登记站点完全同源的请求。
+- **登录凭据**：需要登录才能取到 m3u8 的站点，把 Cookie、`bearer:` 令牌、`basic:用户名:密码` 或多行请求头粘到插件设置。凭据只发给与任务地址完全同源的请求。
 - **反爬站处理**：自动通过站点的「安全检查」中转页，并在页面没有直接 m3u8 时跟随内嵌播放器继续解析。两者都是 fail-closed，处理不了就退回原有行为。
-- **小 Range 兼容**：对「单次请求超过几 MB 就 403」的网盘 CDN，可给下载请求设 Range 上限，在不牺牲多线程的前提下拿到文件。需 FluxDown 0.6.0 及以上，默认不启用。
+- **小 Range 兼容**：对「单次请求超过几 MB 就 403」的网盘 CDN，可给下载请求设 Range 上限，在不牺牲多线程的前提下拿到文件。默认关闭。
 
 ### 批量与订阅
 
 - **剧集页批量下载**：页面含多集结构时先弹选集窗口，可一次勾选多集。插件只返回清单，由引擎建立任务组，插件自身不建任务。判定只认强信号，单视频页不会被误判。
 - **订阅追更**：把分集列表页加为订阅源后，插件枚举其中的条目交给引擎。引擎按 `guid` 去重，只对新集建任务。
-- **分片级去广告**：下载前按播放列表里的广告标记丢弃广告分片，默认关闭。两档强度，可选只认 `CUE-OUT`/`CUE-IN` 与 `DATERANGE` 标注，或叠加「极短分片 / 广告命名」推测。只对本插件解析出来的任务生效。
+- **分片级去广告**：下载前按播放列表里的广告标记丢弃广告分片，默认关闭。两档强度，可选只认 `CUE-OUT`/`CUE-IN` 与 `DATERANGE` 标注，或叠加「极短分片 / 广告命名」推测。只对本插件解析出来的 HLS 任务生效。
 - **去广告自定义规则**：模式之外可写站点级白名单与黑名单，覆盖内置判定。格式见 [`docs/settings.md`](docs/settings.md)。
 
 ### 产物
@@ -50,11 +50,14 @@
 2. FluxDown 进入 **设置 → 扩展 → 插件 → 从目录安装**，选择 `dist/` 目录。
 3. 改 `src/**/*.ts` 后需重新 `npm run build`。改根目录 `manifest.json` 后在客户端重载插件。
 
-插件本体是构建产物 `dist/`。v1.8.0 及更早版本的源码目录 `src/` 即插件本体，TypeScript 迁移后改为 `dist/`，`src/` 不再含 `manifest.json`。
+插件本体是构建产物 `dist/`，`manifest.json` 在仓库根，构建时拷入该目录。源码 `src/` 只是构建输入。
 
 相同 `identity`（`m3u8-resolver@cocolight`）再次安装会替换旧版本。换个 `identity` 会被视为另一个插件，设置项不互通。
 
-从 2.0.x 升到 2.1.0 需要在客户端重新授权。2.1.0 新增了 `intercept` 权限，引擎对已批准权限集合做精确匹配，新权限未批准时插件会装上但保持停用、显示「需要授权」。到插件页点一次授权即可，设置项与凭据都保留。
+从 3.0.0 之前的版本升级，有两个变化会影响原有配置：
+
+- **凭据需要重填**：登录入口已移除，设置在插件内部对话框里的凭据不再被读取。把 Cookie 或令牌填进「站点 · 登录凭据」即可，填法与四种写法见 [设置说明](docs/settings.md)。
+- **权限重新授权**：引擎对已批准的权限集合做精确匹配。权限清单有变化时插件会装上但保持停用、显示「需要授权」，到插件页点一次授权即可。设置项与凭据都保留。
 
 ## 使用说明
 
@@ -101,7 +104,7 @@
 
 解析 `#EXT-X-STREAM-INF` 变体与 `#EXT-X-MEDIA` 音轨，按带宽排序，依「偏好编码 + 偏好画质」算默认变体，并给每个变体配上 `audioUrl`。
 
-请求面以 `request` 补丁返回：`referrer`（优先播放页 URL）、`userAgent`、`setHeaders`（`Origin` + 自定义头）。若该站点存有登录凭据且下载目标与其同源，另附 `originHeaders`。同时标记 `rangeSupported` 以启用多线程分段。
+请求面以 `request` 补丁返回：`referrer`（优先播放页 URL）、`userAgent`、`setHeaders`（`Origin` + 自定义头）。若任务地址与下载目标同源且填了凭据，另附 `originHeaders`。目标与任务不同源时整条凭据不注入并记日志。同时标记 `rangeSupported` 以启用多线程分段。
 
 下载完成后 `onDone` 先用 ffprobe 读真实容器，已是 MP4 家族或无视频轨就不动。否则核心合并失败时补合并，开启「转成 MP4」时无损转封装。写出的产物随即登记为任务的衍生产物。
 
@@ -113,7 +116,7 @@
 
 - 插件只在配置的「目标站点主机」或直链 `.m3u8` 上生效，不处理无关页面。订阅源地址由用户在订阅列表里显式添加。
 - 插件存储只写入两类数据，都不含 Cookie、Token 或凭据：一是「本插件经手的任务 ID → 时间戳」标记，上限 300 条，6 小时后过期；二是剧集批量下载的清单条目映射，上限 400 条，仅在条目 URL 过长或含 `@` 时落盘。
-- 凭据只发给任务地址的同源请求。清单在站内、分片在 CDN 时，Cookie 不会跟着发给 CDN。
+- 凭据只发给与任务地址完全同源的请求。清单在站内、分片在 CDN 时，Cookie 不会跟着发给 CDN。
 - 凭据只进 `originHeaders`，不进全局头表。引擎只对 `scheme://host[:port]` 完全一致的请求附加，插件侧另有一道同源检查，两层叠加。用户手写在「额外请求头」里的内容属显式声明，不受该限制。
 - 下载请求头每次运行重放、不进任务记录。一次性签名链接与临时 Cookie 不会被写进任务数据库。
 - 防抓页 Cookie 只存在于单次解析的内存里。解开挑战得到的 Cookie 仅用于本次解析内重取页面，不写存储、不落盘。
@@ -140,12 +143,6 @@
 - 真正的 JS 指纹与验证码型防抓页无法处理。插件沙箱既无 DOM 也无 JS 执行环境，只能覆盖「用内联脚本种 Cookie 后重载」这类可解码的校验形态。
 - 剧集与订阅的枚举依赖通用启发式，只能枚举写在静态 HTML 里的分集链接。分集列表由前端 JS 调 API 渲染的站点无法枚举，这是启发式的天花板，不是缺陷。这类站点请走 yt-dlp 委派。
 - 去广告只覆盖 HLS，且只在有标记或命名规整时可靠。这是启发式能力，不解码画面、不做音频指纹。DASH 任务不处理，因为分片编号语义不同且没有 CUE 标记。
-
-## 已停用：本地源头去广告
-
-插件曾支持「下载前把 playlist 改写为指向本地清洗服务的地址，由服务剔掉广告段」，旧称「增强 C」。自 v1.4.3 起该能力整体停用，`adClean` 与 `adCleanServer` 两个设置项已从 manifest 移除，resolver 不再改写任何返回的 URL。`adfilter/` 目录自 v3.0.0 起已从仓库删除，实现可回溯：`git log --diff-filter=D -- adfilter/`。
-
-v2.1.0 起改用引擎的拦截平面重做，不再需要外部进程。旧的「增强 C」源码作为回归基线保存在 `tests/legacy/resolver.js`，仅作历史参考，不要恢复。历史方案论证与实测数据见 [`.agents/archive/ad-removal-notes.md`](.agents/archive/ad-removal-notes.md)。
 
 ## 文件结构
 
@@ -183,7 +180,7 @@ v2.1.0 起改用引擎的拦截平面重做，不再需要外部进程。旧的�
 ├── tests/                           # 六层测试，共用 tests/parity/harness.mjs 的假宿主
 │   ├── legacy/                      # 回归基线：v1.8.0 的四个 .js 原文件（冻结）
 │   ├── parity.mjs                   # 行为比对器：同一批 fixture 分别喂给 legacy 与 dist
-│   ├── parity/scenarios.mjs         # 67 个 fixture（直链 / 播放页 / 剧集 / DASH / 鉴权 / 订阅 / 钩子）
+│   ├── parity/scenarios.mjs         # 53 个 fixture（直链 / 播放页 / 剧集 / DASH / 鉴权 / 订阅 / 钩子）
 │   ├── parity/face.mjs              # 请求面同义归并：比「最终生效值」
 │   ├── parity/harness.mjs           # 假宿主（日志 / 宿主调用 / 返回值三路记录）
 │   ├── contract.mjs                 # 请求面契约
@@ -198,7 +195,7 @@ v2.1.0 起改用引擎的拦截平面重做，不再需要外部进程。旧的�
 └── README.md
 ```
 
-插件本体是构建产物 `dist/`。`manifest.json` 位于仓库根，构建时原样拷入 `dist/`，`entry` 使用 `dist/` 内的相对路径。构建后这些脚本仍是彼此独立的上下文，运行时不能互相引用。源码侧可以正常 `import`，共享逻辑由构建期打包进各入口。
+源码侧可以正常 `import`，共享逻辑由构建期打包进各入口，构建后这些脚本仍是彼此独立的上下文，运行时不能互相引用。
 
 ## 开发
 
@@ -208,29 +205,19 @@ npm run typecheck   # 类型检查：tsc --noEmit
 npm run build       # 构建 → dist/（含 manifest.json 拷贝）
 npm run validate    # 校验 manifest 与产物是否符合插件规范（装机前跑）
 npm test            # 六层测试串联
-npm run parity      # 行为回归：dist/ 与 tests/legacy/（v1.8.0）逐场景比对
-npm run contract    # 请求面契约：凭据只走 originHeaders、Basic 的 UTF-8 编码、凭据不落库
-npm run intercept   # 拦截器契约：成对丢弃、不跨密钥边界、不丢空、只碰本插件任务
-npm run postprocess # 后处理契约：产物登记、ffprobe 判容器、探测失败退回扩展名判断
-npm run subscribe   # 订阅契约：防抓页解锁只重取一次、订阅源 Cookie 不丢
-npm run ui          # 设置表单契约：开关成组、主题前缀、默认值与 settings.ts 对账
 npm run pack        # 打包 .fxplug
 ./scripts/check-fast.sh  # 结构门禁：文档路由表、AGENTS 行数、CHANGELOG 条目、版本号一致、空白与冲突标记
 ```
 
-**改行为前先跑 `npm run parity`**。它是重构的安全网，任何「以为等价、实际不等价」的改动都会落到具体场景与字段上。
+测试分六层，各自断言的维度与单独运行方式见 [CONTRIBUTING.md](CONTRIBUTING.md)「本地检查」。下面的口径决定改动该进哪一层：
 
-`tests/legacy/` 是冻结基线，不要修改。有意改变行为的场景在 `tests/parity/scenarios.mjs` 里加 `diverges: "理由"` 声明，比对器把它算作已知差异并打印首个不同点。声明过而实际不再有差异时，比对器会报「豁免过期」。
+- **改行为前先跑 `npm run parity`**。它是重构的安全网，任何「以为等价、实际不等价」的改动都会落到具体场景与字段上。
+- `tests/legacy/` 是冻结基线，不要修改。有意改变行为的场景在 `tests/parity/scenarios.mjs` 里加 `diverges: "理由"` 声明，比对器把它算作已知差异并打印首个不同点。声明过而实际不再有差异时，比对器会报「豁免过期」。
+- **有意改变的行为要进 `contract` 而不是改 parity**。parity 比的是与 v1.8.0 等价，contract 断言的是现在应该是什么样。凭据作用域从「全部主机」收窄到「与任务地址同源」就属于后者。
 
-**有意改变的行为要进 `contract` 而不是改 parity**。parity 比的是与 v1.8.0 等价，contract 断言的是现在应该是什么样。凭据作用域从「全部主机」收窄到「登记 origin」就属于后者。
+## 参与开发
 
-## 开发约定
-
-- 分支：`master` 为默认分支，功能走 `feature/<名称>`。提交前装一次钩子：`git config core.hooksPath .githooks`。
-- 提交与本地检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。AI 编码助手的规则与红线见 [AGENTS.md](AGENTS.md)。
-- 功能状态与验收标准见 [ROADMAP.md](ROADMAP.md)。改动记进 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]`。
-- 文档分层：使用者文档放 `docs/`，工程文档放 `.agents/`。判据只有一条：不读它会不会做错事。
-- 依赖只用 `import type` 引用 SDK 类型（SDK 为 AGPL-3.0-or-later，本项目 MIT），产物零 SDK 运行时。第三方依赖许可证登记在 [THIRD-PARTY.md](THIRD-PARTY.md)。
+分支策略、提交格式、PR 要求、代码约定、文档落点与本地门禁都在 [CONTRIBUTING.md](CONTRIBUTING.md)。AI 编码助手的规则与红线见 [AGENTS.md](AGENTS.md)，发版见 [`.agents/releasing.md`](.agents/releasing.md)。
 
 ## 许可证
 
