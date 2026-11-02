@@ -10,7 +10,7 @@
 > 2.0.0 – 2.2.0 三节无独立 tag（工作随 3.0.0 系列交付），日期标「未发布」。
 > 3.0.0-rc1 是 3.0.0 的**预览版**（pre-release）；rc 之后的新改动记入 `[Unreleased]`，正式 3.0.0 发布时并入 `[3.0.0]` 节。
 > 预发布标识只在 tag / Release / 版本节标题三处；`manifest.json` 与 `package.json` 的版本保持 `3.0.0`（SDK 的 strict 校验只收三段 MAJOR.MINOR.PATCH，不收预发布后缀）。
-> 原计划的 2.3.0（设置页）从未发布，已并入 3.0.0 —— 3.0.0 移除登录入口属 breaking，故一并升大版本。
+> 原计划的 2.3.0（设置页）从未发布，已并入 3.0.0。3.0.0 移除登录入口属 breaking，故一并升大版本。
 
 ## [Unreleased]
 
@@ -19,8 +19,16 @@
 - 订阅 provider 支持防抓页解锁：遇「安全检查」页时解出 Cookie 并对同一地址重取一次（此前只会解析出空 feed，用户看不出是被拦了）
 - 新增 `tests/subscribe.mjs`：订阅契约 14 项（解锁只重取一次、不循环、订阅源 Cookie/UA 不丢且合并而非覆盖）
 
+### Changed
+
+- 文档去 AI 味改写：README 重排结构、长句拆短，全仓文档破折号插入语清零（40 → 0 处）
+- 建立 `docs/settings.md` 与 `README.md` 的括号嵌套上限，超长表格行外的段落一律拆句
+
 ### Fixed
 
+- `AGENTS.md` §8 删掉对已删除文件 `main.tsx` / `rulecheck.ts` / `adpresets.ts` 的引用，改为指向 `manifest.json` 与 ADR-0009
+- 测试分层表述统一为六层：补上 `subscribe`（`AGENTS.md`、`architecture.md`、`configuration.md`、`definition-of-done.md`、`releasing.md`、`CONTRIBUTING.md`）
+- `README.md` 安装说明的 `.fxplug` 文件名更正为 `m3u8-resolver@cocolight-<版本号>.fxplug`
 - `releasing.md` 更正 `npm run pack` 产物名的描述：实际为 `m3u8-resolver@cocolight-<版本>.fxplug`，非 `fluxdown-plugin-m3u8_<版本>.fxplug`
 - `hooks` 的 ffmpeg 失败日志区分超时：超时单独提示「默认 5 分钟上限、产物可能是不完整的半成品」，不再只报 `code -1`
 - `tests/parity/harness.mjs` 的 `ffmpeg.run` 开始透传 `timedOut`（此前写死 `false`，超时分支从未被覆盖）

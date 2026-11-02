@@ -1,10 +1,8 @@
 # fluxdown-plugin-m3u8 功能清单（ROADMAP）
 
-> 状态取值：`planned` / `in-progress` / `done` / `dropped`。
-> 「验收标准」须**可判定**（能被命令或明确检查验证），AI 助手据此判断功能是否完成。
->
-> **归档规则**：`done` / `dropped` 行累计约 20 条时，把最旧的移入 `.agents/archive/roadmap.md`
-> （移动而非删除，历史可追溯）；本表保留未完成行与最近完成项。归档不改写任何行的内容与验收标准。
+状态取值 `planned` / `in-progress` / `done` / `dropped`。「验收标准」须可判定，能被命令或明确检查验证。
+
+归档规则：`done` / `dropped` 行累计约 20 条时，把最旧的移入 `.agents/archive/roadmap.md`。移动而非删除，归档不改写任何行的内容。
 
 | # | 功能 | 分支 | 状态 | 依赖 | 验收标准 |
 |---|------|------|------|------|----------|
@@ -15,20 +13,22 @@
 | 5 | 工程规范改造：AI 协作骨架、四层门禁、文档分层 | - | done | 4 | `./scripts/check-fast.sh` 通过；`AGENTS.md` ≤200 行；`.agents/` 下每篇 `.md` 均在 `AGENTS.md` §1 路由表；`docs/` 只剩使用者文档 |
 | 6 | 设置页视图（M5）：`main` + `contributes.views` 做去广告规则编辑 | - | done | 4 | 视图在桌面与 Web 均渲染；`npm run validate` 风险等级仍为 `elevated`（未引入 `desktop` 权限） |
 | 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 18 项 | - | planned | 4 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
-| 8 | 字幕下载 / 封装 | - | dropped | - | 判定依据：`.agents/capability-matrix.md` §4 —— resolver 返回值无字幕字段，插件亦不能写入下载目录 |
+| 8 | 字幕下载 / 封装 | - | dropped | - | 判定依据：resolver 返回值无字幕字段，插件亦不能写入下载目录（见 `.agents/capability-matrix.md` §4） |
 | 9 | 移除登录入口，凭据改由设置项 `authCookie` 直供（v3.0.0） | - | done | 6 | `contract` 断言 manifest 无 `auth` 段/无 `auth` 权限/产物无 `auth.js`；`npm test` 五层全绿 |
 | 10 | 设置页改为「大众 / 专业」两档视图 | - | done | 9 | `expertMode` 默认关时只显示 12 项常用设置；`npm run ui` 断言两档渲染与切换 |
 | 11 | 设置页改三个页签（基础 / 参数 / 去广告），去掉 `expertMode` | - | done | 10 | `npm run ui` 48 项全绿；基础页只有开关、参数类项不出现在基础页；三页求和覆盖 manifest 全部 27 项 |
 | 12 | 设置面收敛为宿主表单，删自定义视图与 `main` 入口（v3.0.0） | feature/settings-host-form | done | 11 | `npm run ui` 18 项全绿（开关成组 / 主题前缀 / 默认值锁定 / 产物形态）；`contract` 32 项含「无 main / 无 views」；dist 无 `main.js`、零 SDK 运行时 |
 
-> 第 1、2 行写的「parity 67/67 一致」是 M1 / M2 当时的验收口径，按只追加规则原样保留。
-> M4 起 parity 口径为 63/67 一致 + 4 项 `diverges` 声明（见第 4 行），以 `npm run parity` 实际输出为准。
-> 第 6 行的「视图在桌面与 Web 均渲染」在无图形环境里无法自证：可判定部分（`validate` 仍为 `elevated`、
-> `npm run ui` 37 项通过、未声明 `desktop` 因而恒为可移植视图）已满足，两端实际渲染留作装机待实测项 #19。
-> v3.0.0 起 parity 口径再次变化：移除登录入口后 13 条 `auth` 场景一并删除，凭据 3 条改为 `authCookie` 驱动，
-> 现为 46/53 一致 + 7 项 `diverges`；数字以 `npm run parity` 实际输出为准。
-> 第 10 行的验收口径（`expertMode` 默认关只显示 12 项）已被第 11 行取代：那个开关已删除，
-> 改为三个页签，页签选择只存视图 state、不落库。按只追加规则，第 10 行原文保留。
-> 第 11 行的验收口径（三页签、ui 48 项）已被第 12 行取代：自定义视图删除，设置面 = 宿主表单，
-> `ui` 改为 18 项声明契约。按只追加规则，第 11 行原文保留。
-> 第 7 行的待验项计数随第 12 行调整：视图相关的 5 项（原 19–23）失效删除，23 → 18 项。
+## 验收口径的现状
+
+表内各行写的是**当时**的验收口径，按只追加规则原样保留。当前以命令实际输出为准：
+
+| 项目 | 现行口径 |
+| --- | --- |
+| `npm run parity` | 46/53 一致 + 7 项 `diverges` 声明 |
+| `npm run ui` | 18 项 |
+| `npm run postprocess` | 36 项 |
+| `npm run subscribe` | 14 项 |
+| 装机待验项 | 18 项（`.agents/sdk-migration.md` 第九节） |
+
+已被取代的口径：第 1、2 行的 `parity 67/67` 是 M1 / M2 当时的标准；第 4 行的 `63/67 + 4 diverges` 是 M4 到 v2.2.0 的标准。第 10 行（`expertMode` 两档）被第 11 行取代，第 11 行（三页签、ui 48 项）被第 12 行取代。第 6 行的「视图在桌面与 Web 均渲染」已无法验证，因为视图本身在 v3.0.0 被删除，原待实测项 #19 至 #23 随之失效。

@@ -1,16 +1,16 @@
-# AGENTS.md — 给 AI 编码助手的行为规则
+# AGENTS.md：给 AI 编码助手的行为规则
 
 > 本文件供 AI 编码助手（WorkBuddy / Claude Code / Cursor 等）自动读取。
 > **开始任务前先读完本文件；需求含糊时先提问，不要臆造。**
 
 ## 0. 项目
 
-fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插件，TypeScript 源码经
+fluxdown-plugin-m3u8 是 FluxDown 下载器的 HLS/DASH 发现与变体解析插件。TypeScript 源码经
 `fluxdown-plugin build` 打包成 `dist/`，插件本体是 `dist/` 而非仓库根。
 
 ## 1. 上下文入口（按任务路由，不要全读）
 
-开任何任务先读本文件；其余按下表按需读，不要一次全读 —— 全读会挤掉代码上下文。
+开任何任务先读本文件；其余按需读下表，不要一次全读，全读会挤掉代码上下文。
 
 | 你要做什么 | 先读 |
 |---|---|
@@ -40,7 +40,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 |------|------|
 | 安装依赖 | `npm ci` |
 | 运行（装机） | `npm run build`，然后在 FluxDown「设置 → 扩展 → 插件 → 从目录安装」选 `dist/` |
-| 测试 | `npm test`（parity + contract + intercept + postprocess + ui 串联） |
+| 测试 | `npm test`（parity + contract + intercept + postprocess + subscribe + ui 串联） |
 | Lint | `npm run typecheck`（`tsc --noEmit`，兼类型检查与静态检查） |
 | 格式化检查 | 无独立工具；行尾空白与冲突标记由 `./scripts/check-fast.sh` 断言（理由见 §4 第 11 条） |
 | 快速门禁（提交前与 CI 同跑，无需填写） | `./scripts/check-fast.sh` |
@@ -62,7 +62,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 - **前置**：CI 全绿；`ROADMAP.md` 无 `in-progress` 行；`CHANGELOG.md` 的 `[Unreleased]` 已写全。
 - **命名**（三处必须一致）：tag 用 `vX.Y.Z`（带 `v`）；Release title 与 tag 完全相同；`CHANGELOG.md` 版本节写 `[X.Y.Z] - 日期`（**不带** `v`）。
 - **顺序**：先改版本号（`manifest.json` 与 `package.json` 两处）与 `CHANGELOG.md` → 提 PR 合入 `master` → **在 `master` 上**打 tag → 建 Release → 附 `npm run pack` 产物。
-- 未经明确要求，不得 `git tag` / 推送 tag / 建 Release —— 见 §4 红线第 6 条。
+- 未经明确要求，不得 `git tag` / 推送 tag / 建 Release，见 §4 红线第 6 条。
 
 ## 4. 红线（违反即回滚）
 
@@ -87,14 +87,14 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 12. 交付物只写项目相关内容：PR 描述、CHANGELOG、文档、代码注释等面向读者的内容，不得夹带与本项目无关的本地环境 / 工具链 / 沙箱 / 认证等 Agent 运行问题，以及 AI 的执行过程。
 13. 文档写给人看。每节先给结论，句子短，用具体名词。不写元话语，不写「值得注意的是」「众所周知」这类填充语。负面清单，命中即改：破折号插入语成墙；①②③④ 编号癖和多事项巨型长条目；辩护式长括号；无对应提交的「原先 / 之前」虚构历史；拟人化修辞对比；营销式分区标题；面向 AI 的过程说明与验证过程叙事。
 14. 常驻上下文文档控体积：`AGENTS.md` 不超过 200 行（CI 行数断言）。超限先拆：详细内容下沉 `.agents/`，本文件只留入口指针与红线。
-15. 决策即时沉淀：重要取舍 / 非显而易见的决定，落仓库即生效，不依赖会话记忆 —— 小决策随改动记 `CHANGELOG.md` 条目「（理由：一句话）」，需留痕的架构决策新增一条 ADR（§9）。
+15. 决策即时沉淀：重要取舍 / 非显而易见的决定，落仓库即生效，不依赖会话记忆。小决策随改动记 `CHANGELOG.md` 条目「（理由：一句话）」，需留痕的架构决策新增一条 ADR（§9）。
 
 ## 5. 完成定义（DoD）
 
 详见 `.agents/definition-of-done.md`。任一功能完成须同时满足：
 
 - [ ] `ROADMAP.md` 该行「验收标准」全部满足
-- [ ] 新增 / 更新对应测试且符合测试质量基线（断言行为而非实现、测试名说清场景、拒绝空转断言、变异自检），五层测试全量通过
+- [ ] 新增 / 更新对应测试且符合测试质量基线（断言行为而非实现、测试名说清场景、拒绝空转断言、变异自检），六层测试全量通过
 - [ ] 类型检查与格式检查通过
 - [ ] 相关文档（README / AGENTS / architecture / ADR / CHANGELOG）同步更新
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 已记录本次改动
@@ -122,7 +122,7 @@ fluxdown-plugin-m3u8 — FluxDown 下载器的 HLS/DASH 发现与变体解析插
 | 外部接口契约 | `src/types.ts` + `fluxdown-plugin-sdk` 的类型定义（宿主侧字段以 SDK 为准，SDK 未声明的在 `types.ts` 补注） |
 | 数据结构与存储 | `src/lib/handled.ts`（任务标记）、`src/lib/items.ts`（剧集条目映射）、`src/lib/settings.ts`（设置读取与默认值） |
 | 关键算法或业务规则 | `src/lib/adrules.ts`（去广告三条纪律）、`src/lib/hls.ts`（变体与音轨解析）、`src/lib/discovery.ts`（master / mpd 发现）、`src/lib/naming.ts`（命名决策链） |
-| 设置页视图 / 界面节点 | `src/entry/main.tsx`（`flux.ui.view` 注册与 JSX 节点树）、`src/lib/rulecheck.ts`（界面侧规则校验，与 `adrules` 同源）、`src/lib/adpresets.ts`（预设档位） |
+| 设置页 | 无插件自己的视图：设置面 = `manifest.json` 的 `settings[]`，由宿主生成单张表单（见 ADR-0009）。设置读取与默认值在 `src/lib/settings.ts` |
 | 版本号 | `manifest.json` 的 `version`（事实源）与 `package.json` 的 `version`，两者必须相等，由 `scripts/check-fast.sh` 断言 |
 | 插件系统版本门槛 | `.agents/sdk-migration.md` 的版本门槛表（哪个字段自哪个引擎版本提供） |
 | 第三方依赖许可证 | `THIRD-PARTY.md`（每引入一个直接依赖须登记：许可证 SPDX 标识、用途、是否随分发） |

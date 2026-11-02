@@ -13,7 +13,7 @@
 | `src/lib/` | 入口共享的纯函数模块，构建期打包进各入口 |
 | `src/types.ts` | 内部共享类型，补 SDK 未声明的宿主字段 |
 | `tests/legacy/` | v1.8.0 的四个 `.js` 原文件，冻结基线，不参与构建 |
-| `tests/` | 五层测试：parity / contract / intercept / postprocess / ui |
+| `tests/` | 六层测试：parity / contract / intercept / postprocess / subscribe / ui |
 | `dist/` | 构建产物 = 插件本体（「从目录安装」指向此目录），不入库 |
 | `docs/` | 只放使用者文档 |
 | `.agents/` | 工程协作文档，AI 与人共读 |
@@ -63,7 +63,7 @@
 | postprocess | `npm run postprocess` | 后处理契约（登记时机与名字、探测回退、容器家族、封面图） |
 | ui | `npm run ui` | 设置表单契约（声明结构：开关成组、主题前缀、默认值锁定、select 选项、产物形态） |
 
-- 五层共用 `tests/parity/harness.mjs` 的假宿主。新增断言先想清楚它属于「等价」还是「契约」，**不要靠改基线抹平差异**。
+- 六层共用 `tests/parity/harness.mjs` 的假宿主。新增断言先想清楚它属于「等价」还是「契约」，**不要靠改基线抹平差异**。
 - 变异自检：新增或修改断言后，故意破坏对应实现，确认断言会红。没红过的断言等于没写。
 
 ## 8. 腐化信号与重构触发

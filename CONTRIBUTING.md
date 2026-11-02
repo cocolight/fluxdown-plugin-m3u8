@@ -1,8 +1,6 @@
 # 贡献指南
 
-> 项目：fluxdown-plugin-m3u8
-
-> 🤖 使用 AI 编码助手开发时，请先阅读 [AGENTS.md](AGENTS.md)（规则与红线）。
+使用 AI 编码助手开发时，请先阅读 [AGENTS.md](AGENTS.md)（规则与红线）。
 
 ## 分支策略
 
@@ -40,7 +38,7 @@ git config core.hooksPath .githooks
 ```bash
 npm ci                # 安装依赖
 npm run typecheck     # 类型检查（兼静态检查）
-npm test              # 五层测试：parity / contract / intercept / postprocess / ui
+npm test              # 六层测试：parity / contract / intercept / postprocess / subscribe / ui
 ```
 
 `./scripts/check-fast.sh` 已经包含格式类断言（行尾空白、冲突标记、版本号一致、文档路由表），无需另跑格式化工具。

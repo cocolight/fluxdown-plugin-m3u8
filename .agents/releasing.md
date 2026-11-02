@@ -8,7 +8,7 @@
 发版不是「功能做完」的自然结果，而是一次需要显式确认的独立动作。以下条件**同时**满足才可发：
 
 - [ ] `ROADMAP.md` 中没有任何 `in-progress` 行
-- [ ] 五层测试与类型检查全绿；`npm run build` 与 `npm run validate` 通过
+- [ ] 六层测试与类型检查全绿；`npm run build` 与 `npm run validate` 通过
 - [ ] CI 在待发版的那个 commit 上全绿
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 已写全本次要发的改动，分类正确
 - [ ] 待发版 commit 已经合入 `master`（只在 `master` 上发版，不在功能分支上发）
