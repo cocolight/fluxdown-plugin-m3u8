@@ -62,6 +62,14 @@
 | 新增权限却没在 Release 说明里提 | 用户升级后发现插件停在「需要授权」状态 | 说明里单列一条 |
 | 往已发布的版本节继续追加条目 | 已发布内容被篡改，无法回溯 | 已发布节**只读**，新改动进 `[Unreleased]` |
 
+> **本机打包的 EPERM（WorkBuddy 环境特有）**：`npm run build` 与 `npm run pack` 里 SDK 用
+> `cpSync(manifest.json → dist/manifest.json)`，在 WorkBuddy 的 `node-brokered-fs-shim` 下**恒 EPERM**
+> （`dangerouslyDisableSandbox` 也拦，是 Node 层 shim 非沙箱策略）。build 在 `copyStatic` 抛错，pack 中断，
+> 但 esbuild 的 JS 已产出、仅 `dist/manifest.json` 没进去。绕过两步：① `python3 -c "import shutil; shutil.copyfile('manifest.json','dist/manifest.json')"` 补拷；
+> ② 用 Python zipfile 手工打包（`ZIP_DEFLATED` + `compresslevel=6`、mtime 设 2020-01-01、`external_attr=0o644<<16`、
+> manifest 在根、递归遍历排序），产物名 `m3u8-resolver@cocolight-<版本>.fxplug`。打包脚本与校验见
+> `2026-11-03` 工作日志第七轮。
+
 ## 5. 预发布（需要时）
 
 要给使用者提前试用时，用语义化版本的预发布标识，例如 `v2.3.0-rc.1`：
