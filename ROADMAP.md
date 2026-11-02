@@ -13,6 +13,9 @@
 | 5 | 工程规范改造：AI 协作骨架、四层门禁、文档分层 | - | done | 4 | `./scripts/check-fast.sh` 通过；`AGENTS.md` ≤200 行；`.agents/` 下每篇 `.md` 均在 `AGENTS.md` §1 路由表；`docs/` 只剩使用者文档 |
 | 6 | 设置页视图（M5）：`main` + `contributes.views` 做去广告规则编辑 | - | done | 4 | 视图在桌面与 Web 均渲染；`npm run validate` 风险等级仍为 `elevated`（未引入 `desktop` 权限） |
 | 7 | 装机实测收口：`.agents/sdk-migration.md` 第九节 3 项 | - | in_progress | 3 | 该表每行都有「结论」列且非空；结论与代码不一致时已开对应改动项 |
+| 13 | 装机实测缺测试源的 3 项：#4 手选变体、#13 丢分片续传、#17 `maxRangeBytes`+`ephemeral` | - | planned | 7 | 三项各自在真机上跑出结论并写进 `.agents/sdk-migration.md` 第九节 |
+| 14 | ~~插件设置页签分流~~ **已否决，改为表单重排** | - | done | 12 | 页签是 GPUI 桌面专属（`settings_view()` 不查 `portable`），且要推翻 ADR-0009。改做站点段提到最前 + 去广告紧随开关段，`npm run ui` 断言分段与顺序 |
+| 15 | 凭据站点约束收紧：裸域改精确匹配 + 缺省继承 `targetHosts` | - | done | 5 | ADR-0011；`contract` 65 项；真机 A/B 确认子域不再拿到 Cookie |
 | 8 | 字幕下载 / 封装 | - | dropped | - | 判定依据：resolver 返回值无字幕字段，插件亦不能写入下载目录（见 `.agents/capability-matrix.md` §4） |
 | 9 | 移除登录入口，凭据改由设置项 `authCookie` 直供（v3.0.0） | - | done | 6 | `contract` 断言 manifest 无 `auth` 段/无 `auth` 权限/产物无 `auth.js`；`npm test` 五层全绿 |
 | 10 | 设置页改为「大众 / 专业」两档视图 | - | done | 9 | `expertMode` 默认关时只显示 12 项常用设置；`npm run ui` 断言两档渲染与切换 |
@@ -26,7 +29,9 @@
 | 项目 | 现行口径 |
 | --- | --- |
 | `npm run parity` | 46/53 一致 + 7 项 `diverges` 声明 |
-| `npm run ui` | 18 项 |
+| `npm run contract` | 65 项 |
+| `npm run ui` | 21 项 |
+| `npm run intercept` | 74 项 |
 | `npm run postprocess` | 36 项 |
 | `npm run subscribe` | 14 项 |
 | 装机待验项 | 3 项（`.agents/sdk-migration.md` 第九节；原 18 项，2026-11-02 定案 6 项，2026-11-03 定案 9 项） |

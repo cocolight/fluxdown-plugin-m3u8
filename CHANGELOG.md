@@ -37,6 +37,8 @@
 - 凭据没写 `@站点` 时改为继承 `targetHosts`，该清单留空才真正不限站点（理由：用户已在同一张表单里表达过站点意图，再抄一遍只会漏抄）
 - 新增 `src/lib/site.ts`：`targetHosts` 的解析与命中判断，resolver 与凭据缺省约束共用一份
 - `credentialOrigin()` / `ytdlpArgsFromCredential()` / `credentialFor()` 增加 `targetHosts` 参数并透传到 `parseCredential()`
+- 设置表单重排：站点两项（生效范围 / 登录凭据）提到最前，去广告两项紧随开关段（理由：站点决定「在哪些站生效、用什么身份」，是配置的第一步）
+- 设置表单契约 19 → 21 项：新增「站点两项排最前」「去广告紧随开关段」两条顺序断言
 - `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
 - 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
 - 拦截器契约 33 → 72 项：新增 `failed` 23 项、`refresh` 12 项
@@ -61,7 +63,6 @@
 - `tests/parity/harness.mjs` 的 `ffmpeg.run` 开始透传 `timedOut`（此前写死 `false`，超时分支从未被覆盖）
 - 新增 `tests/postprocess.mjs` 两组用例：超时日志文案、超时不登记产物（36 项）
 - `targetHosts` 补上 `"default": ""`：此前缺该键，运行时取到 `null`，`str()` 变字符串 `"null"` 被当成主机名，所有播放页都不处理（理由：宿主表单回显空串，界面看不出异常）
-- 设置表单契约 18 → 19 项：新增「27 项都显式声明 default」，堵住「缺键被当空串」的绿测试
 
 ## [3.0.0-rc1] - 2026-11-02
 

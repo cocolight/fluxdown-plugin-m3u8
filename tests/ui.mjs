@@ -27,14 +27,29 @@ const DIST = process.env.UI_DIST || join(ROOT, "dist");
 const MANIFEST = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
 const FIELDS = MANIFEST.settings;
 
-/** 开关段：连续排最前的 11 个 boolean，宿主把它们并成一张卡片。顺序即卡片内顺序。 */
+/** 开关段：连续排在一起 11 个 boolean，宿主把它们并成一张卡片。顺序即卡片内顺序。 */
 const TOGGLE_KEYS = [
   "solveChallenge", "followIframe", "detectDash", "detectSeries", "htmlFallbackYtdlp",
   "autoPick", "useYtdlp", "audioOnly", "remuxToMp4", "fixMuxFallback", "ephemeral",
 ];
 
-/** 非开关段的主题序列（同主题连续，去广告殿后）。 */
-const THEMES = ["画质", "音轨", "命名", "站点", "网络", "解析", "剧集", "下载", "去广告"];
+/**
+ * 站点段：`targetHosts` 与 `authCookie`，排在最前。
+ *
+ * 为什么在最前：这两项决定「插件在哪些站生效、用什么身份」，是用户配置的第一步；
+ * 而它们彼此相关（`targetHosts` 还是凭据的缺省站点范围），放在一起才能看出关系。
+ *
+ * 宿主只把**连续开关**合并成一张卡片（`plugin_settings.rs:442` 的 option_group），
+ * 非开关字段一律逐个渲染、彼此分隔 —— 所以这两项做不成「一张卡片」，只能做到
+ * 「排在最前、相邻、形成可见的开头区块」。这是声明式表单的能力上限，不是取舍。
+ */
+const SITE_KEYS = ["targetHosts", "authCookie"];
+
+/** 去广告段：紧随开关之后，让「要不要去广告、怎么去」连在一起。 */
+const AD_KEYS = ["adRulesMode", "adRulesExtra"];
+
+/** 其余参数段的主题序列（同主题连续，顺序即渲染顺序）。 */
+const THEMES = ["画质", "音轨", "命名", "网络", "解析", "剧集", "下载"];
 
 /** 推荐默认值（方案A）。有意改默认值时必须同步这张表，否则这里红。 */
 const DEFAULTS = {
@@ -94,7 +109,7 @@ const eq = (actual, expected, label) =>
 const byKey = (k) => FIELDS.filter((f) => f.key === k)[0];
 
 // ---------------------------------------------------------------------------
-// 1. 声明结构：开关成组、三段顺序
+// 1. 声明结构：站点段 → 开关段 → 去广告段 → 参数段
 // ---------------------------------------------------------------------------
 {
   await ck("结构：共 27 项且 key 唯一", async () => {
@@ -104,25 +119,32 @@ const byKey = (k) => FIELDS.filter((f) => f.key === k)[0];
     return eq(keys.length, 27, "设置项数");
   });
 
-  await ck("结构：11 个开关连续排最前（宿主才并得成一张卡片）", async () => {
-    const head = FIELDS.slice(0, TOGGLE_KEYS.length).map((f) => f.key);
-    const r = eq(head, TOGGLE_KEYS, "前 11 项");
-    if (r !== true) return r;
-    const tail = FIELDS.slice(TOGGLE_KEYS.length);
-    const leaked = tail.filter((f) => f.type === "boolean").map((f) => f.key);
-    return leaked.length === 0 ? true : `开关段之后还有 boolean：${show(leaked)}`;
+  await ck("结构：站点两项排最前（生效范围 → 登录凭据）", async () => {
+    return eq(FIELDS.slice(0, SITE_KEYS.length).map((f) => f.key), SITE_KEYS, "前 2 项");
   });
 
-  await ck("结构：非开关 16 项按主题聚簇，去广告恰为最后两项", async () => {
-    const rest = FIELDS.slice(TOGGLE_KEYS.length);
-    const titles = rest.map((f) => f.title);
+  await ck("结构：11 个开关连续成段（宿主才并得成一张卡片）", async () => {
+    const start = SITE_KEYS.length;
+    const head = FIELDS.slice(start, start + TOGGLE_KEYS.length).map((f) => f.key);
+    const r = eq(head, TOGGLE_KEYS, "开关段");
+    if (r !== true) return r;
+    const tail = FIELDS.slice(start + TOGGLE_KEYS.length);
+    const leaked = tail.filter((f) => f.type === "boolean").map((f) => f.key);
+    return leaked.length === 0 ? true : `开关段之外还有 boolean：${show(leaked)}`;
+  });
+
+  await ck("结构：去广告两项紧随开关段", async () => {
+    const start = SITE_KEYS.length + TOGGLE_KEYS.length;
+    return eq(FIELDS.slice(start, start + AD_KEYS.length).map((f) => f.key), AD_KEYS, "去广告段");
+  });
+
+  await ck("结构：其余参数按主题聚簇（同主题连续，不交错）", async () => {
+    const rest = FIELDS.slice(SITE_KEYS.length + TOGGLE_KEYS.length + AD_KEYS.length);
     const runs = [];
-    for (const t of titles.map((x) => x.split(" · ")[0])) {
+    for (const t of rest.map((f) => f.title.split(" · ")[0])) {
       if (runs[runs.length - 1] !== t) runs.push(t);
     }
-    const r = eq(runs, THEMES, "主题序列");
-    if (r !== true) return r;
-    return eq(titles.slice(-2), ["去广告 · 模式", "去广告 · 自定义规则"], "末尾两项");
+    return eq(runs, THEMES, "主题序列");
   });
 
   await ck("结构：每项都有非空 title 与 description（不留无说明的裸字段）", async () => {
@@ -133,16 +155,20 @@ const byKey = (k) => FIELDS.filter((f) => f.key === k)[0];
 
 // ---------------------------------------------------------------------------
 // 2. 主题前缀：「主题 · 项目」是平铺表单里唯一的分类路标
+//
+// 站点段与去广告段各有自己的分组方式（排在最前 / 紧随开关），标题仍走主题前缀，
+// 因此它们也计入前缀断言 —— 前缀是**唯一**的分类路标，一处失效整张表单就失去结构。
 // ---------------------------------------------------------------------------
 {
+  const PREFIXED = FIELDS.filter((f) => f.type !== "boolean");
   await ck("前缀：16 个非开关项标题全部符合「主题 · 项目」", async () => {
-    const bad = FIELDS.slice(TOGGLE_KEYS.length).filter((f) => !/^[^ ·]+ · \S/.test(f.title));
+    const bad = PREFIXED.filter((f) => !/^[^ ·]+ · \S/.test(f.title));
     return bad.length === 0 ? true : `格式不合规：${show(bad.map((f) => [f.key, f.title]))}`;
   });
 
-  await ck("前缀：主题取自白名单且 9 类全覆盖", async () => {
-    const got = [...new Set(FIELDS.slice(TOGGLE_KEYS.length).map((f) => f.title.split(" · ")[0]))];
-    return eq(got, THEMES, "主题集合");
+  await ck("前缀：主题取自白名单且全覆盖（站点在最前、去广告紧随开关）", async () => {
+    const got = [...new Set(PREFIXED.map((f) => f.title.split(" · ")[0]))];
+    return eq(got, ["站点", "去广告", ...THEMES], "主题集合（按首次出现顺序）");
   });
 }
 
