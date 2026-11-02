@@ -268,6 +268,52 @@ export async function followIframe(
 // 统一抓取入口
 // ---------------------------------------------------------------------------
 
+/**
+ * 若 `first` 是防抓页挑战，解出 Cookie 带同一份 headers 对同一 URL 重取一次；否则原样返回。
+ *
+ * 为什么单独抽出来：订阅 provider（`entry/subscribe.ts`）也被同一批站点挡在防抓页后面，
+ * 但它不走 `smartFetch` —— 它的请求头来自**订阅源自己的** `cookies` / `userAgent`（引擎按
+ * 订阅设置喂进来），与 `fetchHeaders` 那套「任务 URL 同源凭据」是两套语义，不能混。
+ * 所以这里只负责「识别挑战 → 解 Cookie → 带同一份 headers 重取」，headers 由调用方决定。
+ *
+ * 纪律（与 smartFetch 一致，不许放宽）：
+ *   · 只重取**一次**，不循环 —— 解出 Cookie 后仍被拦，就当失败返回，绝不进死循环。
+ *   · 解不出 Cookie 时原样返回首个响应：fail-closed，绝不比不处理更差。
+ *   · `onSolved` 让调用方把 Cookie 回填到自己那套容器（resolver 用 rc.cookies，订阅不用回填）。
+ *
+ * 调用方**必须**先自己判定「确实是挑战」再进来（`solveChallenge` 非空），这样它能在
+ * 真正要发第二次请求时才消耗自己的预算 / 计数名额。
+ */
+export async function retryWithChallenge(
+  url: string,
+  headers: Record<string, string>,
+  first: FluxFetchResponse,
+  onSolved?: (cookie: string) => void,
+): Promise<FluxFetchResponse> {
+  const sol = solveChallenge(first && first.body);
+  if (!sol || !hostKey(url)) return first;
+  if (onSolved) onSolved(sol.cookie);
+  flux.logger.info("[m3u8-resolver] 命中防抓页校验，已解出 Cookie 并对同一地址重取");
+  return await flux.fetch({ url, headers: mergeIntoHeaders(headers, "Cookie", sol.cookie) });
+}
+
+/** 把一段 Cookie 并进 headers 的现有 Cookie 值（其余头原样保留，不修改入参）。 */
+function mergeIntoHeaders(headers: Record<string, string>, name: string, value: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let merged = false;
+  for (const k in headers) {
+    if (!Object.prototype.hasOwnProperty.call(headers, k)) continue;
+    if (k.toLowerCase() === name.toLowerCase()) {
+      out[k] = mergeCookie(headers[k], value);
+      merged = true;
+    } else {
+      out[k] = headers[k];
+    }
+  }
+  if (!merged) out[name] = value;
+  return out;
+}
+
 /** 带请求头 + 计数闸；命中挑战则解 Cookie 并对同一 URL 重取一次（不循环）。 */
 export async function smartFetch(env: Env, url: string, referer: string): Promise<FluxFetchResponse> {
   const rc = env.rc;
@@ -276,13 +322,12 @@ export async function smartFetch(env: Env, url: string, referer: string): Promis
   const r = await flux.fetch({ url, headers: fetchHeaders(env, referer, url) });
   if (!env.s.solveChallenge) return r;
   if (!r || r.status !== 200 || !r.body) return r;
-  const sol = solveChallenge(r.body);
-  if (!sol) return r;
+  if (!solveChallenge(r.body)) return r; // 没有挑战就不扣重取名额
   const host = hostKey(url);
   if (!host) return r;
-  rc.cookies[host] = mergeCookie(rc.cookies[host], sol.cookie);
-  flux.logger.info("[m3u8-resolver] 命中防抓页校验，已解出 Cookie 并对同一地址重取");
   if (rc.fetches >= RESOLVE_FETCH_CAP) throw new Error("resolve 抓取次数超上限 " + RESOLVE_FETCH_CAP);
   rc.fetches++;
-  return await flux.fetch({ url, headers: fetchHeaders(env, referer, url) });
+  return await retryWithChallenge(url, fetchHeaders(env, referer, url), r, (cookie) => {
+    rc.cookies[host] = mergeCookie(rc.cookies[host], cookie);
+  });
 }

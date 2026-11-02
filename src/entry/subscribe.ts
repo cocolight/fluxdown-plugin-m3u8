@@ -5,6 +5,7 @@ import { fnv1a32 } from "../lib/hash";
 import { hostWithPort, parseUrl } from "../lib/url";
 import { MEDIA_NOISE_RE, PLAYER_MARK_RE } from "../lib/patterns";
 import { clusterByShape, collectLinks, safeRe } from "../lib/discovery";
+import { retryWithChallenge } from "../lib/http";
 
 /**
  * 订阅 provider —— 入口固定为 `globalThis.subscribe(ctx)`，返回值交给核心的统一订阅状态机
@@ -82,7 +83,11 @@ async function subscribe(ctx: SubscribeContext): Promise<SubscribeResult> {
   if (ctx.userAgent) headers["User-Agent"] = String(ctx.userAgent);
   if (ctx.cookies) headers["Cookie"] = String(ctx.cookies);
 
-  const res = await flux.fetch({ method: "GET", url, headers });
+  const res0 = await flux.fetch({ method: "GET", url, headers });
+  // 防抓页：订阅站与下载站是同一批站点，一样会被「安全检查」页挡下 —— 不解的话这里只会
+  // 解析出一个空 feed，而且用户完全看不出是被拦了。只重取一次，解不出就按原样走。
+  // 注意 `retryWithChallenge` 命中时会自己记一条日志，这里不重复记。
+  const res = await retryWithChallenge(url, headers, res0);
   if (res.status < 200 || res.status >= 300) throw new Error("订阅抓取失败 HTTP " + res.status);
   const html = String(res.body || "");
 

@@ -14,6 +14,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- 订阅 provider 支持防抓页解锁：遇「安全检查」页时解出 Cookie 并对同一地址重取一次（此前只会解析出空 feed，用户看不出是被拦了）
+- 新增 `tests/subscribe.mjs`：订阅契约 14 项（解锁只重取一次、不循环、订阅源 Cookie/UA 不丢且合并而非覆盖）
+
 ### Fixed
 
 - `releasing.md` 更正 `npm run pack` 产物名的描述：实际为 `m3u8-resolver@cocolight-<版本>.fxplug`，非 `fluxdown-plugin-m3u8_<版本>.fxplug`

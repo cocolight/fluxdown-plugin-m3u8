@@ -14,11 +14,12 @@
     "validate": "fluxdown-plugin validate",
     "pack": "fluxdown-plugin pack",
     "typecheck": "tsc --noEmit",
-    "test": "npm run parity && npm run contract && npm run intercept && npm run postprocess && npm run ui",
+    "test": "npm run parity && npm run contract && npm run intercept && npm run postprocess && npm run subscribe && npm run ui",
     "parity": "node tests/parity.mjs",
     "contract": "node tests/contract.mjs",
     "intercept": "node tests/intercept.mjs",
     "postprocess": "node tests/postprocess.mjs",
+    "subscribe": "node tests/subscribe.mjs",
     "ui": "node tests/ui.mjs"
   },
   "devDependencies": {
