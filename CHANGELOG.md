@@ -14,6 +14,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `releasing.md` 更正 `npm run pack` 产物名的描述：实际为 `m3u8-resolver@cocolight-<版本>.fxplug`，非 `fluxdown-plugin-m3u8_<版本>.fxplug`
+
 ## [3.0.0-rc1] - 2026-11-02
 
 > 3.0.0 的预览版。以下条目即该 rc 的全部改动；正式版 3.0.0 另开节记录 rc 之后的增量。
