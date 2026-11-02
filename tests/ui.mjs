@@ -150,6 +150,20 @@ const byKey = (k) => FIELDS.filter((f) => f.key === k)[0];
 // 3. 默认值（方案A）：与 settings.ts 的读取兜底双向钉死
 // ---------------------------------------------------------------------------
 {
+  // 缺 `default` 键 ≠ 默认空串。引擎侧 value_of() 走
+  // `values.get(key).or_else(|| field.default)` → 两边都没有就是 None，
+  // build_typed_settings_json 对 string 产出 Null，插件侧 flux.settings[k] 拿到
+  // null，而 src/lib/settings.ts 的 str() 用 String(v) 把它变成 "null" ——
+  // 一个合法的「主机名」。targetHosts 因此会把生效范围锁成名为 null 的站点，
+  // 所有播放页都不处理。宿主表单却回显空串（plugin_settings.rs:102 的
+  // 兜底），界面看不出异常。这条断言就是堵「测试绿、运行时崩」的缝。
+  await ck("默认值：27 项都显式声明了 default（缺键会让运行时拿到 null）", async () => {
+    const bad = FIELDS.filter((f) => !("default" in f)).map((f) => f.key);
+    return bad.length === 0
+      ? true
+      : `缺 default 键：${show(bad)}（引擎会回落到 null，str() 再变成 "null"）`;
+  });
+
   await ck("默认值：27 项与推荐值（方案A）逐项一致", async () => {
     const bad = [];
     for (const f of FIELDS) {

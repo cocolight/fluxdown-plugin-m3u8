@@ -233,7 +233,8 @@
       "title": "站点 · 生效范围",
       "description": "逗号分隔的主机名；留空 = 对所有站点生效。",
       "type": "string",
-      "widget": "text"
+      "widget": "text",
+      "default": ""
     },
     {
       "key": "authCookie",
