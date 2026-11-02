@@ -27,7 +27,7 @@
 | 3 | 「宿主只在 `flux.fetch` 内注入认证档案，下载链路拿不到 → 凭据必须自己塞进 `extraHeaders`」`resolver.js:167-172,246-269` | `resolve()` 返回值新增 `request: RequestPatch`（`cookies` / `setHeaders` / `referrer` / `userAgent` / `originHeaders` / `segments` / `maxRangeBytes`），**每次运行重放、不落库** | **失效**，`authHeadersAsync()` 应退役 |
 | 4 | 「`#EXT-X-KEY:METHOD=NONE` 会失败，属上游 `m3u8-rs 6.0.1` 缺陷，插件无法规避」`README.md:100`、`docs/upstream-m3u8-rs-method-none.md` | 引擎侧已修：PR [#715](https://github.com/zerx-lab/FluxDown/pull/715) 于 2026-10-05 合并，随 **v0.5.4（10-06）** 发布（"修复 HLS 流中 `#EXT-X-KEY:METHOD=NONE` 之后的明文分片仍沿用上一段 AES-128 密钥解密"） | **失效**，`docs/*.patch` 两个补丁作废 |
 | 5 | 「字幕单层不可行：返回值无字幕字段 + ffmpeg 沙箱送不进文件」`README.md:95` | 有了 `onDone` + `flux.task.recordArtifact()`（登记产物，随任务删除），但**插件仍无写入下载目录的能力**；`recordArtifact` 只接受"已存在"的文件 | **部分失效**：remux 产物可登记；字幕**仍不可落地** |
-| 6 | 「沙箱无 `btoa`（QuickJS 全局对象实测）」`resolver.js:172` | API 参考「JavaScript 运行环境 → 可用」列表现含 `atob`/`btoa` | **待实测**（可能是新版本补充），届时 `b64encode()` 可删 |
+| 6 | 「沙箱无 `btoa`（QuickJS 全局对象实测）」`resolver.js:172` | 实测（2026-11-02，0.6.6）：`typeof btoa === "function"`，`atob` 同。**但 `URL`/`TextDecoder`/`setTimeout` 仍全无** | **部分失效**：`btoa` 可用，但只处理 Latin-1，UTF-8 仍要自己的 `b64encode`；自写 URL 解析**必须留着** |
 | 7 | 「`hooks.match` 只按任务原始 URL 过滤 → 用 `taskId` 存储标记判断归属」`hooks.js:8-13` | 未变；但拦截器有 `ctx.task.id`，同样需要标记（且多一处写入点） | **仍成立**，保留标记机制 |
 | 8 | 「manifest `deny_unknown_fields`，旧版见到新字段整份拒绝，`minAppVersion` 救不了」matrix `:139` | 未变：`minAppVersion` 在 serde 解析**之后**才检查 | **仍成立**，抬门槛必须当成 breaking |
 
@@ -703,9 +703,9 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 
 | # | 待验点 | 为什么重要 | 判定方法 |
 | --- | --- | --- | --- |
-| 1 | `typeof btoa` / `typeof URL` | 决定能否删 `b64encode`，以及类型假设是否成立 | 在 resolver 里 `flux.logger.info(typeof btoa, typeof URL)` |
+| 1 | ~~`typeof btoa` / `typeof URL`~~ **已实测（2026-11-02）** | 决定能否删 `b64encode`，以及类型假设是否成立 | **`btoa` 在、`URL`/`TextDecoder`/`setTimeout` 全无** → `b64encode` 与自写 URL 解析都留着 |
 | 2 | ~~`finalize` 阶段 `flux.ffmpeg.run` 是否可用~~ **已实测（2026-11-02，0.6.6）** | 决定 remux 能否迁出 `onDone` | **可用**。见下方「2 号实测结论」 |
-| 3 | `segments` 的 `id` 语义与 `drop` 边界 | 绝对 media sequence；丢错一位会毁掉整条流 | 对同一流分别 `drop:[n]` 与 `drop:[]`，比对产物时长与可播性 |
+| 3 | ~~`segments` 的 `id` 语义与 `drop` 边界~~ **已实测（2026-11-02）** | 绝对 media sequence；丢错一位会毁掉整条流 | **`id` = 绝对 media sequence**；`drop` 含未知 id 会致整份决策被丢弃 |
 | 4 | `resolver.request` 与 `variants` 同时返回 | 补丁是否对"用户手选变体"后的下载生效 | 手选 720p 后抓包看 Referer/Cookie 是否仍带上 |
 | 5 | `originHeaders` 的 host 归一化 | 决定 CDN 是否真的不收 Cookie | 用两个子域（`a.site.com` / `cdn.site.com`）分别登记，观察注入 |
 | 6 | 开发模式 `dist/` 热重载 | 决定 M1 之后的工作流 | 改 `resolver.ts` → build → 不重载是否生效；改 `manifest.json` → 必须重载 |
@@ -713,12 +713,12 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 | 8 | `request.referrer` / `userAgent` 是否对**分片请求**生效 | 若只作用于清单请求，防盗链站的分片会被 403；M2 的整个请求面都押在这条上 | 抓包看 `.ts` 请求是否带 Referer；对比「只设 referrer」与「同时塞同名头」两种写法的成功率 |
 | 9 | `originHeaders` 与 `setHeaders` 的同名头优先级 | 决定用户手写的 Cookie 能否盖过档案 Cookie（应能） | 档案 Cookie 与 extraHeadersRaw 各写一个同名 Cookie，看服务端收到哪个 |
 | 10 | 0.5.8 之前的客户端遇到 `request` 字段的裁决 | 决定 `minAppVersion` 能不能留 `0.4.8`（现按 0.5.8 处理，属保守选择） | 在 0.4.x 客户端装 2.0.0 包，看是「插件被跳过」「解析失败」还是「忽略该字段」 |
-| 11 | `CUE-OUT` 落在广告第一段还是前一段正片 | 决定丢 `[OUT..IN]` 含两端会不会削掉 6 秒正片 | 找一条带真实广告的 SCTE-35 流，对照产物时长与画面切换点 |
-| 12 | `segments` 阶段的 `ctx.task.id` 与 `resolve` 的 `ctx.taskId` 是否同值 | 归属判定的唯一依据；不同值 = 去广告永远不生效（不误伤，但功能哑火） | 两边各记一条 `flux.logger.info`，对比同一次下载 |
+| 11 | ~~`CUE-OUT` 落在广告第一段还是前一段正片~~ **已实测（2026-11-02）→ 揪出 bug 并修复** | 决定丢 `[OUT..IN]` 含两端会不会削掉正片 | **两家写法不一致**，改用 `CUE-OUT:DURATION` 交叉判定。见「11 号实测结论」 |
+| 12 | ~~`segments` 的 `ctx.task.id` 与 `resolve` 的 `ctx.taskId` 是否同值~~ **已实测（2026-11-02）** | 归属判定的唯一依据 | **ctx 里没有 `taskId` 字段**，只能读 `ctx.task.id`；两者同值 |
 | 13 | 丢弃分片后引擎的续传行为 | 文档说会干净重来；需确认不留半截旧分片导致时长错乱 | 下到 50% 后开启去广告重跑同一任务，比对产物时长 |
-| 14 | 真实流上 `interceptors` 的调用次数与耗时 | 熔断是「连续 3 次超时 → 插件整体禁用」，会连带停掉 resolver | 200 集批量任务下看审计日志 `intercept.segments` 条数与是否有超时 |
+| 14 | ~~真实流上 `interceptors` 的调用次数与耗时~~ **已实测（2026-11-02）** | 熔断是「连续 3 次超时 → 插件整体禁用」 | **每轨 1 次**（181 分片 / 6701 字节 manifest），量级与估算一致 |
 | 15 | `recordArtifact` 的「主干前缀」规则实测 | 决定产物名能否任意命名（我们只用 `主干.mp4`，理论上稳；若实测更宽松，将来可给 remux 产物加后缀） | 造一个 `.ts` 任务，在 `onDone` 里登记 `主干.mp4` 与 `别的名字.mp4`，看后者是否被拒 |
-| 16 | `flux.ffprobe` 是否总与 `flux.ffmpeg` 同在 | 不同在时探测恒失败 → 退化为扩展名判断（不误伤，但 M4 的收益消失） | 装 ffmpeg 组件后 `flux.ffprobe` 是否为 undefined；再手工删掉 bin 目录里的 ffprobe 复看 |
+| 16 | ~~`flux.ffprobe` 是否总与 `flux.ffmpeg` 同在~~ **已实测（2026-11-02）** | 不同在时探测恒失败 | **恒在**：`flux` 表面静态挂载十个成员，与组件安装状态无关 |
 | 17 | `maxRangeBytes` 与 `ephemeral` / `totalBytes` 的组合 | 文档要求「已知 `totalBytes`」，未知大小时该设置是否被静默忽略 | 网盘 CDN 直链开 `ephemeral` + 填 `rangeCapKb`，看是否仍整段下载 |
 | 18 | 同一任务重复 `onDone`（暂停后恢复）是否重复登记 | 重复登记同名产物若报错会刷 warn；若幂等则无影响 | 下载中暂停→恢复两次，看日志有无「产物登记失败」 |
 > 第 19–23 项（设置页签渲染、`flux.settings.update` 可见时机、`main` 空闲回收、视图 key 重复、
@@ -755,6 +755,70 @@ let long_running = finalize && (ffmpeg_permitted || ytdlp_permitted);
 对 M4 的意义：`onDone` 里的 remux / 产物登记**可以迁到 `finalize`**，好处是阶段更早、拿到的是
 同一任务上下文（`task`），且预算从 5 分钟级放宽到 30 分钟级。但迁移不改收益（两者都只对已存在文件
 操作），属「更合语义」而非「新能力」，故仍列为可选。
+
+### 1 / 3 / 11 / 12 / 14 / 16 号实测结论（2026-11-02，FluxDown 0.6.6）
+
+一次 `segments` 探针 + 一次源码交叉核对，同时结掉六项。
+
+**#1 运行时全局 —— `btoa` 在，`URL` 不在**（沙箱内 `globalThis` 枚举）：
+
+| 全局 | 结果 |
+| --- | --- |
+| `btoa` / `atob` | **`function`**（可用） |
+| `queueMicrotask` / `Promise` | `function`（可用） |
+| `URL` / `URLSearchParams` | **`undefined`** |
+| `TextDecoder` / `TextEncoder` | **`undefined`** |
+| `setTimeout` / `setInterval` | **`undefined`** |
+| `crypto` / `AbortController` / `structuredClone` | **`undefined`** |
+
+结论：`b64encode` **不能删**（`btoa` 只管 Latin-1，中文/UTF-8 仍得自己编码）；
+`lib/url.ts` 里自写的 URL 解析**必须留着**，`new URL()` 会直接抛。
+`setTimeout` 缺失印证了既有的「沙箱无定时器」认知 —— 重试延迟只能交给引擎。
+
+**#16 `flux.ffprobe` 恒在**：`flux` 的键集合实测为
+`fetch, ffmpeg, ffprobe, fs, info, logger, settings, storage, task, ytdlp`，
+`ffprobe` 与 `ffmpeg` 同为 `object`。说明 SDK 的 `flux` 表面是**静态挂载**的，
+不随组件安装状态变化 —— 「装了 ffmpeg 却没有 ffprobe」这种组合不存在。
+组件**缺失**的表现是 `run()` 返回非 0，而不是成员为 `undefined`。（清单里「手工删 bin 目录复看」
+这一步因此无必要。）
+
+**#12 没有 `ctx.taskId`**：`segments` 的 ctx 键集合是
+`format, manifestText, manifestTextOmitted, mediaSequence, periodIndex, playlistUrl, representationId, segments, stage, targetDuration, task, track` —— **`taskId` 与 `task_id` 都不存在**，
+归属只能读 `ctx.task.id`。实测值与 `daemon.task.create` 返回的 `taskId` 同值（`01a19d06-…`），
+且 `ctx.task` 另有 `fileName, isResume, protocol, saveDir, sourceUrl, trackPair, url` 七个字段。
+**这不是待验点了**：`resolve` 的 `ctx.taskId` 与 `ctx.task.id` 同值是设计使然，两者本就是同一个 ID。
+
+**#3 `id` = 绝对 media sequence，`drop` 按 `id` 匹配**：源码 `hls_downloader.rs:780`
+`sequence: media_sequence.saturating_add(segments.len() as u64)` 已说明口径；
+`intercept/drive.rs:417-448` 确认引擎按 `id` 集合判定，**且 `drop` 里出现未知 `id` 时整份决策被
+`tolerate` 后丢弃**（不是忽略该条）。实测 `mediaSequence=0` 的流拿到 `id` 0..180 连续，
+即下标与 `id` 恰好重合，因此**测试里必须用错位的 base 才能验出返回的是 id 而非下标** ——
+`tests/intercept.mjs` 的 `plain(n, base)` 就是为此存在。
+
+**#11 `CUE-IN` 挂哪一段：两家写法不一致，必须用 `CUE-OUT:DURATION` 判** —— 这条实测揪出真 bug。
+
+`#EXT-X-CUE-IN` 的语义是「插播结束、正片恢复」，但打包器对**它挂在哪一段**没有共识：
+
+- videojs 的 `m3u8-parser` 规范示例把它挂在**广告最后一段**上（`CUE-OUT:30` → 2/3/4.ts，IN 在 4.ts）；
+- Flussonic 文档写明挂在**广告之后第一个正片分片**上（"no primeiro segmento depois do intervalo"）。
+
+旧实现无条件按**闭区间** `[OUT..IN]` 丢弃，遇到后者就会每次广告多删一个正片分片。
+实测（`.tooling/t-cue.mjs`，7 段 ×10s、`CUE-OUT:30`）：
+
+| 写法 | 旧实现 | 正确 |
+| --- | --- | --- |
+| A：IN 在广告末段（4 号） | `[2,3,4]` | `[2,3,4]` ✓ |
+| B：IN 在正片首段（5 号） | `[2,3,4,5]` ✗ | `[2,3,4]` |
+
+修复（`src/lib/adrules.ts` `cueBlocks`）：读 `CUE-OUT` 声明的时长，与「闭区间 / 半开区间」两种解释
+比。**只在声明时长与半开区间几乎精确吻合（容差 `min(1s, 半个分片)`）且与闭区间明确不符时**才收缩，
+否则退回闭区间。容差不能放宽到「谁更接近」—— 打包器把 `DURATION` 写成粗值（声明 10 秒、
+实际 3 段 18 秒）的流真实存在，那时「更接近」会把标记判反。此判据同时守住了原有的
+「丢弃超八成 → 放弃」纪律（`tests/intercept.mjs` 73/74→74/74，新增两条 CUE 边界用例）。
+
+**#14 调用次数 = 每轨 1 次**：单个视频任务（181 分片）`segments` 只进 1 次，
+`manifestTextLen=6701`（完整未截断，`manifestTextOmitted=false`）。分离音轨时会各调一次，
+故「200 集 = 数百次」的量级估算成立，`segments` 必须保持纯本地计算这条纪律不变。
 
 ---
 

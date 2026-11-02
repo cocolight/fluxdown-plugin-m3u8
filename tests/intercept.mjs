@@ -218,6 +218,32 @@ const dropOf = (r) => (r.result && r.result.drop ? r.result.drop : null);
     ],
   });
   await ck("标记：多个广告块分别成块", async () => eq(dropOf(multi), [41, 42, 44, 45]));
+
+  // `#EXT-X-CUE-IN` 挂在「广告末段」还是「广告后第一个正片段」，两家打包器写法不一致。
+  // 用 `CUE-OUT` 声明的时长做交叉验证，两种写法都要丢出同一个块 —— 否则 Flussonic 一类
+  // 打包器的流会每次广告都误删一个正片分片（真机实测过，见 .agents/sdk-migraion 记录）。
+  const clip = (base, inOn) =>
+    [0, 1, 2, 3, 4, 5, 6].map((i) =>
+      seg(base + i, `https://cdn.test/hls/v/${inOn === "ad-last" ? "c" : "d"}${i}.ts`, {
+        duration: 10,
+        tags:
+          i === 2
+            ? ["#EXT-X-CUE-OUT:30"]
+            : i === (inOn === "ad-last" ? 4 : 5)
+              ? ["#EXT-X-CUE-IN"]
+              : [],
+      }),
+    );
+  // 写法 A（videojs 规范示例）：3 段广告，IN 挂在第 3 段广告（2/3/4）
+  await ck("标记：IN 挂广告末段 → 丢整块", async () => {
+    const r = await runOnce({ settings: { adRulesMode: "marker" }, segments: clip(50, "ad-last") });
+    return eq(dropOf(r), [52, 53, 54]);
+  });
+  // 写法 B（Flussonic）：标了 IN 的那段已回到正片，不能丢（仍是 2/3/4）
+  await ck("标记：IN 挂正片首段 → 不多丢正片", async () => {
+    const r = await runOnce({ settings: { adRulesMode: "marker" }, segments: clip(60, "content-first") });
+    return eq(dropOf(r), [62, 63, 64]);
+  });
 }
 
 // ---------------------------------------------------------------------------

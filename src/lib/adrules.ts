@@ -162,18 +162,87 @@ function isCueEnd(tags: string[] | undefined | null): boolean {
 }
 
 /**
+ * 从 `#EXT-X-CUE-OUT` / `-CONT` 标签里取声明的广告时长（秒）。
+ * 两种写法都见过：`#EXT-X-CUE-OUT:30` 与 `#EXT-X-CUE-OUT:DURATION=30`。
+ * 取不到就返回 `null` —— 调用方据此退回「相信标记」的保守判断。
+ */
+function cueDuration(tags: string[] | undefined | null): number | null {
+  if (!tags || !tags.length) return null;
+  for (let i = 0; i < tags.length; i++) {
+    const t = tags[i];
+    if (typeof t !== "string") continue;
+    if (!CUE_START.test(t) && !CUE_CONT.test(t)) continue;
+    const m = /DURATION=([0-9]+(?:\.[0-9]+)?)/i.exec(t) || /HLS:.*?duration=([0-9]+(?:\.[0-9]+)?)/i.exec(t);
+    if (m) {
+      const v = Number(m[1]);
+      if (isFinite(v) && v > 0) return v;
+    }
+    // 裸写法 `#EXT-X-CUE-OUT:30`：冒号后直接是数字
+    const bare = /^#EXT-X-CUE-OUT(?::([0-9]+(?:\.[0-9]+)?))?$/i.exec(t);
+    if (bare && bare[1]) {
+      const v = Number(bare[1]);
+      if (isFinite(v) && v > 0) return v;
+    }
+  }
+  return null;
+}
+
+/** 分片时长，取不到时按 `targetDuration` 兜底，再不行按 0。 */
+function segDur(seg: SegmentItem, targetDuration: number | null): number {
+  const d = typeof seg.duration === "number" ? seg.duration : null;
+  if (d !== null && d > 0) return d;
+  return targetDuration !== null && targetDuration > 0 ? targetDuration : 0;
+}
+
+/**
  * 找成对的 CUE 块（闭区间下标）。
+ *
+ * 边界取闭区间还是半开区间，**两家打包器写法不一致**，必须用 `CUE-OUT:DURATION`
+ * 交叉验证才能判对：
+ *
+ *   - videojs / m3u8-parser 规范示例：`#EXT-X-CUE-IN` 挂在**广告最后一段**上
+ *     （`CUE-OUT:30` → 2.ts、3.ts、4.ts 三段广告，4.ts 上标 IN）。闭区间正确。
+ *   - Flussonic 一类打包器：`#EXT-X-CUE-IN` 挂在**广告之后的第一个正片分片**上。
+ *     此时闭区间会把一个正片分片一起丢掉。
+ *
+ * 判法：把 OUT 到 IN 之间的分片时长累加，与 `CUE-OUT:DURATION` 声明的时长比。
+ * **只在声明时长与半开区间几乎精确吻合、且与闭区间明确不符时**才收缩一段；其余情况保持
+ * 闭区间。不能只判「哪个更接近」—— `DURATION` 是近似值，打包器把它写成粗值的流真实存在
+ * （声明 10 秒、实际 3 段 18 秒），那时「更接近」会把标记判反。声明时长不可信时，唯一
+ * 可靠的信息是标记本身。
+ *
  * 只有 OUT 没有 IN 的块不进结果 —— 纪律 1。
  */
-function cueBlocks(segs: SegmentItem[]): Array<[number, number]> {
+function cueBlocks(segs: SegmentItem[], targetDuration: number | null): Array<[number, number]> {
   const blocks: Array<[number, number]> = [];
   let start = -1;
+  let declared: number | null = null;
   for (let i = 0; i < segs.length; i++) {
     const tags = segs[i].tags;
-    if (start < 0 && isCueStart(tags)) start = i;
+    if (start < 0 && isCueStart(tags)) {
+      start = i;
+      declared = cueDuration(tags);
+    }
     if (start >= 0 && isCueEnd(tags)) {
-      blocks.push([start, i]);
+      let end = i;
+      if (declared !== null && i > start) {
+        // 闭区间 [start, i] 的时长
+        let closed = 0;
+        for (let k = start; k <= i; k++) closed += segDur(segs[k], targetDuration);
+        const tail = segDur(segs[i], targetDuration);
+        const open = closed - tail;
+        // 只有「声明时长与半开区间几乎精确吻合、且与闭区间明确不符」时才收缩。
+        // 容差取 `min(1 秒, 半个分片)`：`CUE-OUT:DURATION` 在规范里是近似值，
+        // 打包器把它写成粗值的流真实存在（声明 10 秒、实际 3 段 18 秒）。
+        // 声明时长不可信时，唯一可靠的信息是标记本身 —— 退回闭区间。
+        const tol = Math.min(1, tail / 2);
+        const eOpen = Math.abs(open - declared);
+        const eClosed = Math.abs(closed - declared);
+        if (eOpen <= tol && eClosed - eOpen >= tol) end = i - 1;
+      }
+      if (end >= start) blocks.push([start, end]);
       start = -1;
+      declared = null;
     }
   }
   // start >= 0：流结束仍在广告里，打包器标记不完整 → 按纪律 1 不动
@@ -342,7 +411,7 @@ export function pickAdSegments(
 
   // 2) 广告标记（marker 与 heuristic 都做）
   let cueCount = 0;
-  const blocks = cueBlocks(segs);
+  const blocks = cueBlocks(segs, targetDuration);
   for (let i = 0; i < blocks.length; i++) {
     for (let k = blocks[i][0]; k <= blocks[i][1]; k++) {
       if (!hit[k]) {
