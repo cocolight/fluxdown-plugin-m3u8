@@ -11,7 +11,12 @@
  *
  *   1. 凭据文本可以声明自己的站点（首行 `@站点`，见 `SITE_LINE_RE`）。声明了就以它为准，
  *      任务站点不在范围内时**整条不注入**。
- *   2. 没声明（旧写法）时退回「任务自身 origin」，行为与之前完全一致 —— 不收紧老用户的配置。
+ *   2. 没声明时退回 `targetHosts`（「站点 · 生效范围」）—— 那已是用户在设置页里
+ *      认可过的站点清单，再让他到凭据里抄一遍没有意义。`targetHosts` 为空（对所有站点
+ *      生效）时才退到「任务自身 origin」，行为与之前的版本一致 —— 不收紧老用户的配置。
+ *
+ * 继承 `targetHosts` 而不是直接兜底任务 origin，是因为任务 origin 恒等于自己，那条判断
+ * 在逻辑上是恒真的，等于没有任何站点约束。`targetHosts` 才是用户真正表达过意图的清单。
  *
  * 两种情形下都保留原有的**同源闸**：清单在站内、分片在 CDN 时，CDN 与任务 URL 不同源 →
  * 不注入，Cookie 不会跟着发给第三方 CDN。
@@ -20,6 +25,7 @@
  * 兜底 Cookie。站点行是这四种之外的**可选前缀**，不改变任何一类的解析结果。
  */
 import { base64Utf8 } from "./base64";
+import { parseHostList } from "./site";
 
 /** HTTP 头名（RFC 7230 token）后接冒号与至少一个非空字符，才算一行请求头。 */
 const HEADER_LINE_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}\s*:\s*\S/;
@@ -57,11 +63,21 @@ export interface CredentialSites {
 /**
  * 逐项判定任务站点是否命中约束。**任一命中即放行**（大小写不敏感）。
  *
- * `origins` 与 `hosts` 的区别就是「要不要连协议一起卡」：写 `https://a.com` 说明用户
- * 明确知道自己在哪个协议下登录，此时 `http://a.com` 不该拿到这份 Cookie。
+ * 两种写法的区别有两层：
+ *   - 裸主机名（`a.com`）= **精确匹配** `a.com`，**不含子域**。
+ *   - `*.a.com` = 只匹配真子域，不匹配裸 `a.com`。
+ *
+ * 为什么裸域不覆盖子域（与 `targetHosts` 相反）：`targetHosts` 是**准入白名单**，
+ * 写 `a.com` 想一并覆盖 `www.a.com` / `m.a.com` 是合理的，用户漏填子域只会「少处理」。
+ * 凭据是**限制**，用户写 `@a.com` 是在说「这份 Cookie 属于 a.com」；把它一并发给
+ * `evil.a.com` 就是泄漏，而用户被诱导点到恶意子域是这个通用解析器的常见场景。
+ * 两种语义方向相反，所以实现也必须反向 —— 覆盖子域请显式写 `@*.a.com`。
+ *
+ * `scheme://host[:port]` 形式的写法仍精确到 origin，带协议与端口一起卡：
+ * 写 `https://a.com` 说明用户明确知道自己在哪个协议下登录，`http://a.com` 不该拿到。
  */
 export function siteAllowed(sites: CredentialSites | null, url: string): boolean {
-  if (!sites) return true; // 没写约束 = 不额外限制（旧写法兼容）
+  if (!sites) return true; // 没写约束 = 不额外限制
   const origin = safeOriginLite(url);
   const host = hostOf(url);
   if (!origin && !host) return false;
@@ -74,12 +90,12 @@ export function siteAllowed(sites: CredentialSites | null, url: string): boolean
     const h = host.toLowerCase();
     for (let i = 0; i < sites.hosts.length; i++) {
       const want = sites.hosts[i].toLowerCase();
-      // `*.a.com` 只匹配真子域，不匹配裸 `a.com` —— 与浏览器 Cookie 的域匹配一致。
       if (want.charAt(0) === "*") {
+        // `*.a.com` 只匹配真子域，不匹配裸 `a.com` —— 与浏览器 Cookie 的域匹配一致。
         const base = want.slice(1); // ".a.com"
         if (h.endsWith(base) && h.length > base.length) return true;
-      } else if (h === want || h.endsWith("." + want)) {
-        return true;
+      } else if (h === want) {
+        return true; // 裸主机名：精确匹配，不外扩到子域
       }
     }
   }
@@ -145,6 +161,18 @@ function splitSiteLine(s: string): { body: string; sites: CredentialSites | null
   return { body: body.join("\n").trim(), sites };
 }
 
+/**
+ * `targetHosts` → 站点约束。清单为空（= 对所有站点生效）时返回 `null`，
+ * 即「不额外限制」，与旧版本的不写 `@站点` 行完全等价。
+ *
+ * `targetHosts` 里写的是主机名而不是 origin —— 继承时按主机名匹配（父域覆盖子域），
+ * 不臆测协议。用户想让凭据只在 https 下可用，仍可在凭据首行显式写 `@https://a.com`。
+ */
+function sitesFromHosts(raw: string | null | undefined): CredentialSites | null {
+  const hosts = parseHostList(raw);
+  return hosts.length ? { origins: [], hosts } : null;
+}
+
 
 /**
  * 解析凭据文本。认不出来的一律按 Cookie 处理 —— 这是最常见的形态，
@@ -152,9 +180,15 @@ function splitSiteLine(s: string): { body: string; sites: CredentialSites | null
  *
  * @param raw 设置项原文
  * @param origin 归属站点；调用方应传入任务 URL 的 origin
- * @returns 空文本或只有空白时返回 null
+ * @param targetHosts 「站点 · 生效范围」原文。凭据没写 `@站点` 行时用它作缺省约束；
+ *   留空（对所有站点生效）则不额外限制，行为与旧版本一致。
+ * @returns 空文本、只有空白，或站点不命中时返回 null
  */
-export function parseCredential(raw: string | null | undefined, origin: string): Credential | null {
+export function parseCredential(
+  raw: string | null | undefined,
+  origin: string,
+  targetHosts?: string | null,
+): Credential | null {
   const all = String(raw == null ? "" : raw).trim();
   if (!all) return null;
 
@@ -162,7 +196,7 @@ export function parseCredential(raw: string | null | undefined, origin: string):
   // 否则 `@a.com\nsid=1` 会因为首行不是头而落到「兜底 Cookie」，把站点行也当 Cookie 发出去。
   const split = splitSiteLine(all);
   const s = split.body;
-  const sites = split.sites;
+  const sites = split.sites || sitesFromHosts(targetHosts);
   if (!s) return null; // 只有站点行、没有凭据正文
 
   // 站点约束在这里统一执行 —— 放在解析层而不是各调用点，是为了不漏：

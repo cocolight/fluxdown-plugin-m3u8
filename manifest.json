@@ -231,7 +231,7 @@
     {
       "key": "targetHosts",
       "title": "站点 · 生效范围",
-      "description": "逗号分隔的主机名；留空 = 对所有站点生效。",
+      "description": "逗号分隔的主机名，填主域即覆盖其子域；留空 = 对所有站点生效。凭据没写 @站点 时也以本清单为默认范围。",
       "type": "string",
       "widget": "text",
       "default": ""
@@ -239,7 +239,7 @@
     {
       "key": "authCookie",
       "title": "站点 · 登录凭据",
-      "description": "只发给同一站点的请求。首行可写 @站点 限定范围（如 @a.com），不写则对所有站点生效。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
+      "description": "只发给同一站点的请求。首行可写 @站点 限定范围（@a.com 只匹配 a.com 本身，含子域请写 @*.a.com），不写则用「站点 · 生效范围」的清单。支持 Cookie 原文、bearer:令牌、basic:用户名:密码、多行「键: 值」。",
       "type": "string",
       "widget": "textarea",
       "default": "",

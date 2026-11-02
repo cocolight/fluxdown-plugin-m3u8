@@ -28,6 +28,7 @@ import { parseUrl, safeOrigin, hostKey } from "../lib/url";
 import { mergeCookie } from "../lib/http";
 import { COOKIES_FILE, toNetscapeCookies, ytdlpArgsFromCredential } from "../lib/ytdlp";
 import { sanitize } from "../lib/text";
+import { hostInList, parseHostList } from "../lib/site";
 import {
   isAudioOnlyVariant,
   isDashUrl,
@@ -384,7 +385,7 @@ async function runYtdlpWithCredential(env: Env, extraArgs: string[]): Promise<To
 
   // 归属站点 = 任务自身 URL 的 origin，与 `fetchHeaders` / `originHeaders` 同一口径。
   const origin = safeOrigin(ctx.url);
-  const { cookie, addHeaders } = ytdlpArgsFromCredential(s.authCookie, origin);
+  const { cookie, addHeaders } = ytdlpArgsFromCredential(s.authCookie, origin, s.targetHosts);
   // 站内挑战解出的 Cookie 也带上：它和 `authCookie` 未必重叠，合并去重即可。
   const challenge = origin ? env.rc.cookies[hostKey(ctx.url)] : "";
   const merged = mergeCookie(cookie, challenge);
@@ -471,22 +472,22 @@ async function buildManifestResult(pageTitle: string | null, listing: Listing): 
 }
 
 // ================= 作用域 =================
-/** 直接清单地址（.m3u8 / .mpd）一律处理；页面 URL 仅处理配置好的目标站。 */
+/**
+ * 直接清单地址（.m3u8 / .mpd）一律处理；页面 URL 仅处理配置好的目标站。
+ *
+ * 主机清单与凭据的缺省站点约束共用 `lib/site.ts` 的解析 —— 两处各写一遍 `split(",")`
+ * 迟早漂移，而漂移的那天就是凭据按错误清单放行。
+ */
 function inScope(s: Settings, ctx: ResolveCtx): boolean {
   // 二段 / 订阅条目：地址是插件自己产出的精细目标，一律处理。
   // 少了这行，未配 targetHosts 时清单子任务会被放行成「原样下载」→ 下载到 HTML。
   if (ctx.resolverItem) return true;
   if (isManifestUrl(ctx.url)) return true;
-  const raw = s.targetHosts.trim();
-  if (!raw) return false; // 未配置目标站 → 不处理页面
-  const hosts = raw
-    .split(",")
-    .map((x) => x.trim().toLowerCase())
-    .filter(Boolean);
+  const hosts = parseHostList(s.targetHosts);
+  if (!hosts.length) return false; // 未配置目标站 → 不处理页面
   const p = parseUrl(ctx.url);
   if (!p) return false;
-  const h = p.hostname;
-  return hosts.some((x) => h === x || h.endsWith("." + x));
+  return hostInList(hosts, p.hostname);
 }
 
 install("resolve", resolve);

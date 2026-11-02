@@ -707,7 +707,7 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 | 2 | ~~`finalize` 阶段 `flux.ffmpeg.run` 是否可用~~ **已实测（2026-11-02，0.6.6）** | 决定 remux 能否迁出 `onDone` | **可用**。见下方「2 号实测结论」 |
 | 3 | ~~`segments` 的 `id` 语义与 `drop` 边界~~ **已实测（2026-11-02）** | 绝对 media sequence；丢错一位会毁掉整条流 | **`id` = 绝对 media sequence**；`drop` 含未知 id 会致整份决策被丢弃 |
 | 4 | `resolver.request` 与 `variants` 同时返回 | 补丁是否对"用户手选变体"后的下载生效 | 手选 720p 后抓包看 Referer/Cookie 是否仍带上 |
-| 5 | ~~`originHeaders` 的 host 归一化~~ **已实测（2026-11-03，真机探针）→ 暴露设计缺陷 → 已修（同日）** | 决定 CDN 是否真的不收 Cookie | **同源闸恒真等于无约束**；已改为凭据自带 `@站点` 约束、判断下沉解析层。见「5 号实测结论」与 ADR-0010 |
+| 5 | ~~`originHeaders` 的 host 归一化~~ **已实测（2026-11-03，真机探针）→ 暴露设计缺陷 → 已修（同日）** | 决定 CDN 是否真的不收 Cookie | **同源闸恒真等于无约束**；已改为凭据自带 `@站点` 约束、判断下沉解析层。见「5 号实测结论」与 ADR-0010、ADR-0011 |
 | 6 | ~~开发模式 `dist/` 热重载~~ **已实测（2026-11-03）** | 决定 M1 之后的工作流 | **代码热更、manifest 不热更**。另：`stages: []` 引擎拒、SDK 不报 |
 | 7 | ~~`validate` 严格模式对现有 manifest 的裁决~~ **已实测（2026-11-03）** | 可能立刻暴露既有字段问题 | **一直是 strict**（`cli.js:805` 硬编码）；`elevated` 是权限等级非失败 |
 | 8 | ~~`request.referrer` 是否对**分片请求**生效~~ **已实测（2026-11-03，源码）** | 若只作用于清单，防盗链站分片全 403 | **生效**：`hop()` 每跳执行，`http_request.rs:238` 施加 Referer |
@@ -911,11 +911,11 @@ target=http://cdn.localhost:18113/v.m3u8 originHeaders=[{"origin":"http://cdn.lo
 
 | 写法 | 匹配范围 |
 | --- | --- |
-| `@a.com` | `a.com` 及其所有子域（`www.a.com` / `cdn.a.com`） |
+| `@a.com` | **只** `a.com` 本身，不含子域 |
 | `@*.a.com` | **只**子域，不含裸 `a.com`（与浏览器 Cookie 域匹配一致） |
 | `@https://a.com` | 精确到 origin，`http://a.com` 拿不到 |
 | `@a.com, b.com` | 任一命中即放行 |
-| 不写 `@` 行 | 不受站点限制，行为与旧版完全一致 |
+| 不写 `@` 行 | 继承 `targetHosts`；该清单留空时才真正不限 |
 
 两个设计决定值得记下来：
 
@@ -927,14 +927,19 @@ target=http://cdn.localhost:18113/v.m3u8 originHeaders=[{"origin":"http://cdn.lo
    （`request.ts`）、yt-dlp 委派（`ytdlp.ts`）三条链路都经过它；逐点加判断迟早漏一条，
    漏掉的那条就是泄漏口。契约测试里专门有一条守门用例钉住 yt-dlp 那条链路。
 
-真机验证（0.6.6，`@localhost` 与 `@*.localhost` 各跑一轮，三个 hostname 同端口）：
+真机验证（0.6.6，三个 hostname 同端口，两轮 A/B）。**第一轮暴露了裸域覆盖子域的问题**：
+`@localhost` 约束下 `cdn.localhost` 仍拿到了 Cookie —— 与 `targetHosts` 用同一套匹配逻辑，
+但凭据是限制、`targetHosts` 是白名单，两者意图相反。已按 ADR-0011 收窄：
 
 | 约束 | `localhost` | `127.0.0.1` | `cdn.localhost` |
 | --- | --- | --- | --- |
-| `@localhost` | 注入 | **拦下** | 注入（子域，设计如此） |
+| `@localhost` | 注入 | **拦下** | **拦下** |
 | `@*.localhost` | **拦下** | **拦下** | 注入 |
+| 不写，`targetHosts=localhost` | 注入 | **拦下** | 注入（白名单父域带子域） |
+| 不写，`targetHosts` 留空 | 注入 | 注入 | 注入 |
 
-契约测试 47 → **58 项**（新增 11 条站点约束用例）。取舍与备选方案见 `.agents/adr/0010-credential-site-scope.md`。
+契约测试 47 → **58 → 65 项**。取舍与备选方案见 `.agents/adr/0010-credential-site-scope.md`
+与 `.agents/adr/0011-credential-site-exact-match.md`。
 
 **额外结案（原不在清单）：`flux.fs` 的根不是任务 `save_dir`** —— 实测写入
 `flux.fs.writeFile("x.mp4")` 后，文件落在 `~/.local/share/fluxdown/plugins-work/<identity>/`，

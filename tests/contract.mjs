@@ -200,11 +200,23 @@ const PAGE = `<!doctype html>
     });
   }
 
-  // ③ 子域匹配：@site.test 应覆盖 cdn.site.test
+  // ③ 裸域不覆盖子域（与 targetHosts 相反，见 ADR-0010 决策 1）
+  //
+  // 语义方向：`targetHosts` 是准入白名单，写 `a.com` 一并覆盖子域是便利；
+  // 凭据是限制，写 `@a.com` 是在声明归属，扩到 `evil.a.com` 就是泄漏。
+  // 覆盖子域必须显式写 `@*.a.com`（见 ⑤）。
   {
     const r = await withSite("@site.test\nsid=abc", `${CDN}/hls/master.m3u8`);
+    const oh = r.result.request && r.result.request.originHeaders;
+    check("站点约束：@site.test 不覆盖子域 cdn.site.test（裸域即精确匹配）", () =>
+      oh === undefined ? true : `仍注入（子域被放行）：${show(oh)}`);
+  }
+
+  // ③b 需要子域时显式写通配
+  {
+    const r = await withSite("@*.site.test\nsid=abc", `${CDN}/hls/master.m3u8`);
     const oh = (r.result.request && r.result.request.originHeaders) || [];
-    check("站点约束：@site.test 覆盖子域 cdn.site.test", () =>
+    check("站点约束：@*.site.test 覆盖子域 cdn.site.test", () =>
       oh.length === 1 ? true : `实际 ${show(oh)}`);
   }
 
@@ -239,6 +251,68 @@ const PAGE = `<!doctype html>
     const h = (oh[0] && oh[0].headers) || {};
     check("站点约束：@站点 行不进 Cookie 值", () =>
       String(h.Cookie || "").indexOf("@") === -1 ? true : `Cookie 里混进了站点行：${show(h.Cookie)}`);
+  }
+
+  // ⑧ 缺省继承 `targetHosts` —— 用户已经在「站点 · 生效范围」里表过态的站点清单，
+  //    不该要求他再到凭据里抄一遍。下面的用例成对出现，缺一半就说明不了问题。
+  {
+    const other = "https://other.test/hls/master.m3u8";
+    const routes = { ...SITE_ROUTES, [other]: { body: MASTER } };
+
+    const hit = await resolveOnce({
+      settings: { authCookie: "sid=abc", targetHosts: "site.test" },
+      routes,
+      invoke: (e) => e.resolve(ctxOf(`https://site.test/hls/master.m3u8`)),
+    });
+    const oh1 = (hit.result.request && hit.result.request.originHeaders) || [];
+    check("站点约束：凭据没写 @站点 时继承 targetHosts，命中同站", () =>
+      oh1.length === 1 ? true : `实际 ${show(oh1)}`);
+
+    const miss = await resolveOnce({
+      settings: { authCookie: "sid=abc", targetHosts: "site.test" },
+      routes,
+      invoke: (e) => e.resolve(ctxOf(other)),
+    });
+    const oh2 = miss.result.request && miss.result.request.originHeaders;
+    check("站点约束：继承来的 targetHosts 同样挡住无关站点", () =>
+      oh2 === undefined ? true : `仍生成 ${show(oh2)}`);
+    check("站点约束：被 targetHosts 挡下时凭据不出现在返回值里", () => {
+      const dump = JSON.stringify(miss.result);
+      return dump.indexOf("sid=abc") === -1 ? true : "凭据泄漏进了返回值";
+    });
+
+    // 显式 @站点 优先于 targetHosts：两者冲突时以凭据自己写的为准，
+    // 否则用户在凭据里做的收窄会被宽泛的 targetHosts 悄悄放大。
+    // 这里用 `@*.site.test` 收窄到「只子域」，任务站是裸域 → 必须拦下。
+    const narrow = await resolveOnce({
+      settings: { authCookie: "@*.site.test\nsid=abc", targetHosts: "site.test,cdn.site.test" },
+      routes,
+      invoke: (e) => e.resolve(ctxOf(`https://site.test/hls/master.m3u8`)),
+    });
+    const oh3 = narrow.result.request && narrow.result.request.originHeaders;
+    check("站点约束：显式 @站点 优先于 targetHosts（裸域被凭据收窄）", () =>
+      oh3 === undefined ? true : `仍注入（targetHosts 把范围放大了）：${show(oh3)}`);
+
+    // 反过来：targetHosts 留空（对所有站点生效）时，凭据的约束仍然生效 ——
+    // 「不限站点」是父级开关，不该把凭据自己写的范围抹掉。
+    const stillBound = await resolveOnce({
+      settings: { authCookie: "@site.test\nsid=abc", targetHosts: "" },
+      routes,
+      invoke: (e) => e.resolve(ctxOf(other)),
+    });
+    const oh3b = stillBound.result.request && stillBound.result.request.originHeaders;
+    check("站点约束：targetHosts 留空时，@站点 仍然生效", () =>
+      oh3b === undefined ? true : `仍注入：${show(oh3b)}`);
+
+    // targetHosts 留空 = 对所有站点生效，此时不额外限制，行为与旧版本一致（见 ⑥）。
+    const blank = await resolveOnce({
+      settings: { authCookie: "sid=abc", targetHosts: "" },
+      routes,
+      invoke: (e) => e.resolve(ctxOf(other)),
+    });
+    const oh4 = (blank.result.request && blank.result.request.originHeaders) || [];
+    check("站点约束：targetHosts 留空时不额外限制（旧配置不受影响）", () =>
+      oh4.length === 1 ? true : `实际 ${show(oh4)}`);
   }
 
 }

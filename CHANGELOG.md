@@ -32,6 +32,11 @@
 - 拦截器契约 72 → 74 项：新增「IN 挂广告末段」「IN 挂正片首段」两条 CUE 边界用例
 - 请求面契约 32 → 47 项：新增 yt-dlp 凭据 15 项（7 列格式、secure 位随 scheme、Bearer 走头、无凭据零改动、写失败降级）
 - 请求面契约 47 → 58 项：新增凭据站点约束 11 项（四种写法 × 命中/不命中、无 `@` 行兼容、yt-dlp 链路守门）
+- 请求面契约 58 → 65 项：新增 `targetHosts` 继承 4 项、`@*.` 正面 1 项、优先级 2 项
+- 凭据的 `@a.com` 改为**只匹配 `a.com` 本身**，含子域须显式写 `@*.a.com`（理由：凭据是限制不是白名单，扩到 `evil.a.com` 即泄漏，见 ADR-0011）
+- 凭据没写 `@站点` 时改为继承 `targetHosts`，该清单留空才真正不限站点（理由：用户已在同一张表单里表达过站点意图，再抄一遍只会漏抄）
+- 新增 `src/lib/site.ts`：`targetHosts` 的解析与命中判断，resolver 与凭据缺省约束共用一份
+- `credentialOrigin()` / `ytdlpArgsFromCredential()` / `credentialFor()` 增加 `targetHosts` 参数并透传到 `parseCredential()`
 - `credentialOrigin()` 改为显式接收 `raw` / `siteUrl` / `targetUrl`，resolver 与 `refresh` 共用同一份凭据同源闸
 - 拦截器按 `ctx.stage` 显式分派：`segments` 纯本地、`failed` 只读存储、`refresh` 才发请求
 - 拦截器契约 33 → 72 项：新增 `failed` 23 项、`refresh` 12 项
