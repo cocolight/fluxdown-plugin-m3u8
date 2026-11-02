@@ -707,20 +707,20 @@ heading 的 `text` 传数字 → 2 项失败；往 `hooks.js` 注入 `#fragment`
 | 2 | ~~`finalize` 阶段 `flux.ffmpeg.run` 是否可用~~ **已实测（2026-11-02，0.6.6）** | 决定 remux 能否迁出 `onDone` | **可用**。见下方「2 号实测结论」 |
 | 3 | ~~`segments` 的 `id` 语义与 `drop` 边界~~ **已实测（2026-11-02）** | 绝对 media sequence；丢错一位会毁掉整条流 | **`id` = 绝对 media sequence**；`drop` 含未知 id 会致整份决策被丢弃 |
 | 4 | `resolver.request` 与 `variants` 同时返回 | 补丁是否对"用户手选变体"后的下载生效 | 手选 720p 后抓包看 Referer/Cookie 是否仍带上 |
-| 5 | `originHeaders` 的 host 归一化 | 决定 CDN 是否真的不收 Cookie | 用两个子域（`a.site.com` / `cdn.site.com`）分别登记，观察注入 |
-| 6 | 开发模式 `dist/` 热重载 | 决定 M1 之后的工作流 | 改 `resolver.ts` → build → 不重载是否生效；改 `manifest.json` → 必须重载 |
-| 7 | `validate` 严格模式对现有 manifest 的裁决 | 可能立刻暴露既有字段问题（如 `default` 类型） | 根目录跑 `npx fluxdown-plugin validate` |
-| 8 | `request.referrer` / `userAgent` 是否对**分片请求**生效 | 若只作用于清单请求，防盗链站的分片会被 403；M2 的整个请求面都押在这条上 | 抓包看 `.ts` 请求是否带 Referer；对比「只设 referrer」与「同时塞同名头」两种写法的成功率 |
-| 9 | `originHeaders` 与 `setHeaders` 的同名头优先级 | 决定用户手写的 Cookie 能否盖过档案 Cookie（应能） | 档案 Cookie 与 extraHeadersRaw 各写一个同名 Cookie，看服务端收到哪个 |
-| 10 | 0.5.8 之前的客户端遇到 `request` 字段的裁决 | 决定 `minAppVersion` 能不能留 `0.4.8`（现按 0.5.8 处理，属保守选择） | 在 0.4.x 客户端装 2.0.0 包，看是「插件被跳过」「解析失败」还是「忽略该字段」 |
+| 5 | ~~`originHeaders` 的 host 归一化~~ **已实测（2026-11-03，真机探针）→ 暴露设计缺陷** | 决定 CDN 是否真的不收 Cookie | **同源闸正确但凭据无站点绑定**：清单↔CDN 隔离成立，跨站点全靠用户自律。见「5 号实测结论」 |
+| 6 | ~~开发模式 `dist/` 热重载~~ **已实测（2026-11-03）** | 决定 M1 之后的工作流 | **代码热更、manifest 不热更**。另：`stages: []` 引擎拒、SDK 不报 |
+| 7 | ~~`validate` 严格模式对现有 manifest 的裁决~~ **已实测（2026-11-03）** | 可能立刻暴露既有字段问题 | **一直是 strict**（`cli.js:805` 硬编码）；`elevated` 是权限等级非失败 |
+| 8 | ~~`request.referrer` 是否对**分片请求**生效~~ **已实测（2026-11-03，源码）** | 若只作用于清单，防盗链站分片全 403 | **生效**：`hop()` 每跳执行，`http_request.rs:238` 施加 Referer |
+| 9 | ~~`originHeaders` 与 `setHeaders` 同名头优先级~~ **已实测（2026-11-03，源码）** | 决定用户手写能否盖过档案 | **`originHeaders` 胜**（后执行 + 合并语义）→ 插件侧 `request.ts:158` 必须保留自保判断 |
+| 10 | ~~旧客户端遇到 `request` 字段的裁决~~ **已实测（2026-11-03，源码）** | 决定 `minAppVersion` 能否留低 | **静默忽略**（`ResolveResult` 无 `deny_unknown_fields`）→ 优雅降级，但版本检查在反序列化之后救不了 |
 | 11 | ~~`CUE-OUT` 落在广告第一段还是前一段正片~~ **已实测（2026-11-02）→ 揪出 bug 并修复** | 决定丢 `[OUT..IN]` 含两端会不会削掉正片 | **两家写法不一致**，改用 `CUE-OUT:DURATION` 交叉判定。见「11 号实测结论」 |
 | 12 | ~~`segments` 的 `ctx.task.id` 与 `resolve` 的 `ctx.taskId` 是否同值~~ **已实测（2026-11-02）** | 归属判定的唯一依据 | **ctx 里没有 `taskId` 字段**，只能读 `ctx.task.id`；两者同值 |
 | 13 | 丢弃分片后引擎的续传行为 | 文档说会干净重来；需确认不留半截旧分片导致时长错乱 | 下到 50% 后开启去广告重跑同一任务，比对产物时长 |
 | 14 | ~~真实流上 `interceptors` 的调用次数与耗时~~ **已实测（2026-11-02）** | 熔断是「连续 3 次超时 → 插件整体禁用」 | **每轨 1 次**（181 分片 / 6701 字节 manifest），量级与估算一致 |
-| 15 | `recordArtifact` 的「主干前缀」规则实测 | 决定产物名能否任意命名（我们只用 `主干.mp4`，理论上稳；若实测更宽松，将来可给 remux 产物加后缀） | 造一个 `.ts` 任务，在 `onDone` 里登记 `主干.mp4` 与 `别的名字.mp4`，看后者是否被拒 |
+| 15 | ~~`recordArtifact` 的「主干前缀」规则实测~~ **已实测（2026-11-03，真机探针）** | 决定产物名能否带后缀 | **`startsWith(stem)`，后缀随便加（含中文）**；仅要求裸名 + 文件在 `save_dir` 真实存在 |
 | 16 | ~~`flux.ffprobe` 是否总与 `flux.ffmpeg` 同在~~ **已实测（2026-11-02）** | 不同在时探测恒失败 | **恒在**：`flux` 表面静态挂载十个成员，与组件安装状态无关 |
 | 17 | `maxRangeBytes` 与 `ephemeral` / `totalBytes` 的组合 | 文档要求「已知 `totalBytes`」，未知大小时该设置是否被静默忽略 | 网盘 CDN 直链开 `ephemeral` + 填 `rangeCapKb`，看是否仍整段下载 |
-| 18 | 同一任务重复 `onDone`（暂停后恢复）是否重复登记 | 重复登记同名产物若报错会刷 warn；若幂等则无影响 | 下载中暂停→恢复两次，看日志有无「产物登记失败」 |
+| 18 | ~~重复 `onDone` 是否重复登记~~ **已实测（2026-11-03，真机探针）** | 重复登记若报错会刷 warn | **幂等**：同名连登 3 次全 ACCEPT（`ON CONFLICT DO NOTHING`，`db.rs:2899`） |
 > 第 19–23 项（设置页签渲染、`flux.settings.update` 可见时机、`main` 空闲回收、视图 key 重复、
 > `tabs` 切换）随自定义视图删除而失效（ADR-0009），已从清单移除。设置表单由宿主渲染，
 > 其两端表现属宿主自身行为，不再是插件待验点。
@@ -819,6 +819,101 @@ let long_running = finalize && (ffmpeg_permitted || ytdlp_permitted);
 **#14 调用次数 = 每轨 1 次**：单个视频任务（181 分片）`segments` 只进 1 次，
 `manifestTextLen=6701`（完整未截断，`manifestTextOmitted=false`）。分离音轨时会各调一次，
 故「200 集 = 数百次」的量级估算成立，`segments` 必须保持纯本地计算这条纪律不变。
+
+### 6 / 7 / 8 / 9 / 10 / 15 / 18 号实测结论（2026-11-03，FluxDown 0.6.6）
+
+七项里五项的答案直接来自源码（比真机更确定），两项靠真机探针拿到一手数据。
+
+**#6 代码热更、manifest 不热更**：`installDev` 并不复制文件，而是登记一个指向 `dist/` 的
+内存态路径（`plugins/` 目录里查不到它即为证）。因此改 `dist/*.js` **立即生效**，改
+`dist/manifest.json` 必须 `reloadDev`。实测佐证：把 `stages` 改成 `['failed']` 后不重载，
+`segments` 探针数稳定在 5 不变，说明引擎用的是旧 manifest。**另有一处口径差异**：
+`stages: []` 被引擎拒（`interceptors.stages 不可为空`），而 `npm run validate` 不报此错 ——
+SDK 校验比引擎宽松，别把 `validate` 通过当作「引擎一定接受」。
+
+**#7 `npm run validate` 一直是严格模式**：`validateDist()` → `validatePackage()`，后者内部
+**硬编码 `strict: true`**（`cli.js:805`），不存在「非严格」这条路径。变异测试（把 version
+改成 `3.0.0-rc1`）被当场抓住，证明 strict 真生效。输出里的 `elevated` 只是**权限风险等级**
+（`cli.js:681` 列出 `ffmpeg/ytdlp/auth/tasks/browserRules/background/intercept` 七项），
+不是校验失败 —— 我们因 ffmpeg/ytdlp 恒为 `elevated`，属预期。
+
+**#10 旧客户端对 `request` 字段静默忽略**：`ResolveResult` 的 serde 是
+`#[serde(rename_all = "camelCase", default)]`，**没有 `deny_unknown_fields`**（对比
+`SettingField` 与 manifest 都有）。所以旧客户端拿到带 `request` 的结果时不会报错，只会忽略这个
+字段 —— 属优雅降级。这也解释了为什么 `minAppVersion` 救不了字段级问题：版本检查发生在
+**反序列化之后**（`manager.rs:587`），字段早被吃掉了。
+
+**#8 `referrer` 对分片生效**：`HlsRequestCtx::get()` → `build_request(client, url, GET, identity)`
+→ `HttpRequest::hop()`，而 `hop` 在**每一跳**都执行（含每个 `.ts` 分片），Referer 在
+`http_request.rs:238` 统一施加。防盗链站的分片不会因为「只给清单设了 Referer」而被 403 ——
+M2 整个请求面押注的这一条成立。
+
+**#9 引擎侧 `originHeaders` 覆盖 `setHeaders`**：`apply_extra_headers_where`（`hop` 第 251 行，
+= `setHeaders`）**先**执行，`apply_origin_headers`（第 257 行）**后**执行，reqwest 的
+`.headers()` 是合并语义 → 同名头**后者胜**，即 `originHeaders`（凭据档案）盖过用户手写的
+`extraHeadersRaw`。**这与「用户手写应当能盖过档案」的直觉相反**，所以插件侧在
+`request.ts:158` 用 `pickCI(merged, k) === undefined` 主动跳过用户已写的同名头 —— 是我们自己
+在填坑，不是引擎的保证。改这块代码时必须保留这个自保判断。
+
+**#15 前缀规则是 `startsWith(stem)`，允许后缀**：真机探针（在 `onDone` 里逐个调
+`recordArtifact`，任务主文件 `prog_127.0.0 (2).mp4`，stem `prog_127.0.0 (2)`）：
+
+| 登记名 | 结果 | 拒绝原因 |
+| --- | --- | --- |
+| 主干本身（`prog_127.0.0 (2).mp4`） | **ACCEPT** | — |
+| `主干_remux.mp4` | **ACCEPT** | — |
+| `主干_广告纯.mp4`（中文后缀） | **ACCEPT** | — |
+| `别的名字.mp4` | REJECT | 产物须以任务文件名主干开头 |
+| `x.mp4` | REJECT | 同上 |
+| `主干/../主干.mp4` | REJECT | 非法产物文件名（含 `/`） |
+| `a:b.mp4` | REJECT | 非法产物文件名（含 `:`） |
+| `主干_remux.mp4`（文件**不存在**时） | REJECT | 产物文件不存在 |
+
+结论：四条判据依次为 ① 裸文件名（非空、≤512 字节、无 `/` `\` `:`、非 `.`/`..`）
+② `startsWith(stem)` ③ 文件在 `save_dir` 下真实存在且是普通文件 ④ 落库（幂等）。
+**规则比文档描述的宽松** —— 后缀随便加（中文也行），只要保住「以主干开头 + 文件真在」。
+所以将来给 remux / 去广告产物加后缀名是安全的，不必强行复用 `主干.mp4`。
+
+**#18 重复登记幂等**：同一名字连登 3 次全部 **ACCEPT**，无报错。落库是
+`INSERT ... ON CONFLICT (task_id, file_name) DO NOTHING`（`db.rs:2899`，注释明写「幂等」）。
+所以「暂停后恢复导致 `onDone` 再跑一次」不会刷出「产物登记失败」的 warn。
+
+**#4 未列入本轮，仍在清单**（需手选变体的真实流，本地 fixture 造不出变体选择）。
+
+**#5 同源闸是对的，但「凭据无站点绑定」这层风险比 ADR-0006 写的大** —— 真机探针实测。
+
+做法：`authCookie` 写 `X-Probe: from-auth` + `Cookie: sid=ABC123`，同一个 HTTP server 用三个
+hostname 访问（`localhost` / `127.0.0.1` / `cdn.localhost`），把收到的头原样打印。插件侧临时加一行
+`[PROBEPATCH]` 打印 `requestPatch()` 的产物。三组结果**完全一致**，全部收到 Cookie 与自定义头：
+
+```
+target=http://localhost:18113/v.m3u8     originHeaders=[{"origin":"http://localhost:18113",...}]
+target=http://127.0.0.1:18113/v.m3u8     originHeaders=[{"origin":"http://127.0.0.1:18113",...}]
+target=http://cdn.localhost:18113/v.m3u8 originHeaders=[{"origin":"http://cdn.localhost:18113",...}]
+```
+
+对照实验（把 `authCookie` 清空）三组全部为空，证明注入确实来自插件。
+
+根因：`credentialOrigin(s.authCookie, ctx.url, targetUrl)` 里 `origin` 是用**本次任务 URL 自身**
+的 origin 生成的（`parseCredential(text, site)` 的 `site = safeOrigin(ctx.url)`）。于是
+`originHeaders[].origin` 与目标必然同源 —— 同源判断**恒真**，实际效果等于「全通配」。
+
+**做对的那一半**：清单在 `site.com`、分片在 `cdn.site.com` 时，分片请求的 origin 与 `ctx.url`
+不同源 → `credentialOrigin` 返回 null → `originHeaders` 根本没生成 → Cookie 不会跟去 CDN。
+这条原意（不让凭据落到 CDN）成立，已有 `credential.ts` 的注释与实现对齐。
+
+**没做的那一半**：`authCookie` 是**一对全局设置**，不含站点。任何 URL 只要走到本插件，都能拿到
+这份凭据。用户若在不受信任的 m3u8 地址上使用含登录态的 Cookie，凭据会被发送给那个站点。
+这是 v3.0.0 删掉登录入口（按站点登录档案，`site_key` 精确到 `scheme://host[:port]`）的代价，
+**ADR-0006 只写了「老用户凭据失效」，没写「新模型失去了站点绑定」**。补法有两条：给
+`authCookie` 加可选的 `站点` 前缀字段，或在文档里明确「凭据仅用于你信任的站点」。
+本轮只记录，不改行为 —— 属产品决策，需要用户拍板。
+
+**额外结案（原不在清单）：`flux.fs` 的根不是任务 `save_dir`** —— 实测写入
+`flux.fs.writeFile("x.mp4")` 后，文件落在 `~/.local/share/fluxdown/plugins-work/<identity>/`，
+而 `recordArtifact("x.mp4")` 仍报「产物文件不存在」。**两个根毫无关系**。含义：插件**没有**
+往下载目录写文件的能力，`recordArtifact` 只能登记「本来就在那儿」的文件。这条同时给
+「字幕」这条硬限制补上了证据 —— 不是不想做，是接口上写不进去。
 
 ---
 
